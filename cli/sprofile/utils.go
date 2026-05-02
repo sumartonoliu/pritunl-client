@@ -289,7 +289,7 @@ func Status(sprflId string) (string, error) {
 		return "", err
 	}
 	_, status := sprfl.FormatedStatus()
-	if sprfl != nil && sprfl.State && sprfl.Profile != nil && sprfl.Profile.Status == "connected" {
+	if sprfl.State && sprfl.Profile != nil && sprfl.Profile.Status == "connected" {
 		return fmt.Sprintf("Connected (online for %s)", status), nil
 	}
 	return status, nil
