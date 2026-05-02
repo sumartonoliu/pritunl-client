@@ -42,4 +42,5 @@ func init() {
 	RootCmd.AddCommand(StartCmd)
 	RootCmd.AddCommand(StopCmd)
 	RootCmd.AddCommand(ConvertCmd)
+	RootCmd.AddCommand(StatusCmd)
 }

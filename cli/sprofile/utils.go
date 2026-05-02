@@ -178,6 +178,18 @@ func GetAll() (sprfls Sprofiles, err error) {
 	return
 }
 
+func Status(sprflId string) (string, error) {
+	sprfl, err := Match(sprflId)
+	if err != nil {
+		return "", err
+	}
+	_, status := sprfl.FormatedStatus()
+	if sprfl != nil && sprfl.State && sprfl.Profile != nil && sprfl.Profile.Status == "connected" {
+		return fmt.Sprintf("Connected (online for %s)", status), nil
+	}
+	return status, nil
+}
+
 // PasswordPrompt reads the system profile authentication from the
 // terminal in the order expected by the service.
 func PasswordPrompt(sprfl *Sprofile) (pass string, err error) {
