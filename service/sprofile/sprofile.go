@@ -64,6 +64,7 @@ type Sprofile struct {
 	DeviceAuth         bool                        `json:"device_auth"`
 	DisableGateway     bool                        `json:"disable_gateway"`
 	DisableDns         bool                        `json:"disable_dns"`
+	DisableIpv6        bool                        `json:"disable_ipv6"`
 	Dco                bool                        `json:"dco"`
 	DebugOutput        bool                        `json:"debug_output"`
 	RestrictClient     bool                        `json:"restrict_client"`
@@ -108,6 +109,7 @@ type SprofileClient struct {
 	DeviceAuth         bool                        `json:"device_auth"`
 	DisableGateway     bool                        `json:"disable_Gateway"`
 	DisableDns         bool                        `json:"disable_dns"`
+	DisableIpv6        bool                        `json:"disable_ipv6"`
 	Dco                bool                        `json:"dco"`
 	DebugOutput        bool                        `json:"debug_output"`
 	RestrictClient     bool                        `json:"restrict_client"`
@@ -155,6 +157,7 @@ func (s *Sprofile) Client() (sprflc *SprofileClient) {
 		DeviceAuth:         s.DeviceAuth,
 		DisableGateway:     s.DisableGateway,
 		DisableDns:         s.DisableDns,
+		DisableIpv6:        s.DisableIpv6,
 		Dco:                s.Dco,
 		DebugOutput:        s.DebugOutput,
 		RestrictClient:     s.RestrictClient,
@@ -217,6 +220,7 @@ func (s *Sprofile) Copy() (sprfl *Sprofile) {
 		DeviceAuth:         s.DeviceAuth,
 		DisableGateway:     s.DisableGateway,
 		DisableDns:         s.DisableDns,
+		DisableIpv6:        s.DisableIpv6,
 		Dco:                s.Dco,
 		DebugOutput:        s.DebugOutput,
 		RestrictClient:     s.RestrictClient,
@@ -385,7 +389,9 @@ func (s *Sprofile) syncUpdate(data string) (updated bool, err error) {
 			return
 		}
 
-		s.Name = confData.Name
+		if confData.Name != "" {
+			s.Name = confData.Name
+		}
 		s.Wg = confData.Wg
 		s.OrganizationId = confData.OrganizationId
 		s.Organization = confData.Organization
@@ -400,17 +406,11 @@ func (s *Sprofile) syncUpdate(data string) (updated bool, err error) {
 		s.GeoSort = confData.GeoSort
 		s.ForceConnect = confData.ForceConnect
 		s.DeviceAuth = confData.DeviceAuth
-		s.DisableGateway = confData.DisableGateway
-		s.DisableDns = confData.DisableDns
-		s.Dco = confData.Dco
-		s.DebugOutput = confData.DebugOutput
 		s.RestrictClient = confData.RestrictClient
-		s.ForceDns = confData.ForceDns
 		s.SsoAuth = confData.SsoAuth
 		s.PasswordMode = confData.PasswordMode
 		s.Token = confData.Token
 		s.TokenTtl = confData.TokenTtl
-		s.Disabled = confData.Disabled
 		s.SyncTime = time.Now().Unix()
 		s.SyncHosts = confData.SyncHosts
 		s.SyncHash = confData.SyncHash
@@ -582,6 +582,42 @@ func (s *Sprofile) syncProfile(host string) (updated bool, err error) {
 	return
 }
 
+func (s *Sprofile) SyncApply(body []byte) (updated bool, err error) {
+	syncData := &SyncData{}
+	err = json.Unmarshal(body, syncData)
+	if err != nil {
+		err = &errortypes.ParseError{
+			errors.Wrap(err, "sprofile: Failed to parse gateway sync body"),
+		}
+		return
+	}
+
+	if syncData.Conf == "" {
+		return
+	}
+
+	hashFuncSync := hmac.New(sha512.New, []byte(s.SyncSecret))
+	hashFuncSync.Write([]byte(syncData.Conf))
+	rawSignatureSync := hashFuncSync.Sum(nil)
+	sigSync := base64.StdEncoding.EncodeToString(rawSignatureSync)
+
+	if subtle.ConstantTimeCompare(
+		[]byte(sigSync), []byte(syncData.Signature)) != 1 {
+
+		err = &errortypes.ParseError{
+			errors.New("sprofile: Gateway sync signature invalid"),
+		}
+		return
+	}
+
+	updated, err = s.syncUpdate(syncData.Conf)
+	if err != nil {
+		return
+	}
+
+	return
+}
+
 func (s *Sprofile) Sync() (updated bool, err error) {
 	for _, syncHost := range s.SyncHosts {
 		if syncHost == "" {
@@ -600,6 +636,13 @@ func (s *Sprofile) Sync() (updated bool, err error) {
 }
 
 func (s *Sprofile) Commit() (err error) {
+	if utils.IsFlatpak() {
+		err = &errortypes.WriteError{
+			errors.New("sprofile: System profiles not supported in Flatpak"),
+		}
+		return
+	}
+
 	prflsPath := GetPath()
 
 	err = platform.MkdirSecure(prflsPath)
@@ -628,6 +671,10 @@ func (s *Sprofile) Commit() (err error) {
 }
 
 func (s *Sprofile) Delete() (err error) {
+	if utils.IsFlatpak() {
+		return
+	}
+
 	prflPth := s.BasePath() + ".conf"
 	logPth1 := s.BasePath() + ".log"
 	logPth2 := s.BasePath() + ".log.1"

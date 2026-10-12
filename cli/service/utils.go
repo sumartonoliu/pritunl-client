@@ -14,24 +14,45 @@ import (
 	"github.com/pritunl/pritunl-client/cli/utils"
 )
 
+const (
+	TcpAddress = "127.0.0.1:9770"
+)
+
+const pollTimeout = 5 * time.Second
+
+var unixTransport = &http.Transport{
+	DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+		return net.Dial("unix", GetUnixSocket())
+	},
+}
+
 var httpClient = &http.Client{
 	Timeout: 1 * time.Minute,
 }
 
 var unixClient = &http.Client{
-	Timeout: 1 * time.Minute,
-	Transport: &http.Transport{
-		DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-			return net.Dial("unix", "/var/run/pritunl.sock")
-		},
-	},
+	Timeout:   1 * time.Minute,
+	Transport: unixTransport,
+}
+
+var httpPollClient = &http.Client{
+	Timeout: pollTimeout,
+}
+
+var unixPollClient = &http.Client{
+	Timeout:   pollTimeout,
+	Transport: unixTransport,
+}
+
+func GetUnixSocket() string {
+	return utils.GetSockPath()
 }
 
 func GetAddress() string {
 	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
 		return "http://unix"
 	} else {
-		return "http://127.0.0.1:9770"
+		return "http://" + TcpAddress
 	}
 }
 
@@ -56,5 +77,13 @@ func GetClient() *http.Client {
 		return unixClient
 	} else {
 		return httpClient
+	}
+}
+
+func GetPollClient() *http.Client {
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
+		return unixPollClient
+	} else {
+		return httpPollClient
 	}
 }

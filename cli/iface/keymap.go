@@ -1,7 +1,7 @@
 package iface
 
 import (
-	"github.com/charmbracelet/bubbles/key"
+	"charm.land/bubbles/v2/key"
 )
 
 type KeyMap struct {
@@ -13,6 +13,9 @@ type KeyMap struct {
 	Import     key.Binding
 	Logs       key.Binding
 	Settings   key.Binding
+	Remove     key.Binding
+	Config     key.Binding
+	Refresh    key.Binding
 	Quit       key.Binding
 }
 
@@ -31,11 +34,11 @@ var bindings = KeyMap{
 	),
 	Connect: key.NewBinding(
 		key.WithKeys("c"),
-		key.WithHelp("c", "connect_ovpn"),
+		key.WithHelp("c", "connect"),
 	),
 	ConnectWg: key.NewBinding(
 		key.WithKeys("w"),
-		key.WithHelp("w", "connect_wg"),
+		key.WithHelp("w", "connect wireguard"),
 	),
 	Disconnect: key.NewBinding(
 		key.WithKeys("d"),
@@ -49,8 +52,60 @@ var bindings = KeyMap{
 		key.WithKeys("s"),
 		key.WithHelp("s", "settings"),
 	),
+	Remove: key.NewBinding(
+		key.WithKeys("r", "delete"),
+		key.WithHelp("r", "remove"),
+	),
+	Config: key.NewBinding(
+		key.WithKeys("a"),
+		key.WithHelp("a", "advanced settings"),
+	),
+	Refresh: key.NewBinding(
+		key.WithKeys("R", "ctrl+r"),
+		key.WithHelp("R", "refresh"),
+	),
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),
 		key.WithHelp("q", "quit"),
+	),
+}
+
+type LogsKeyMap struct {
+	Back  key.Binding
+	Next  key.Binding
+	Prev  key.Binding
+	Clear key.Binding
+	Top   key.Binding
+	End   key.Binding
+	Quit  key.Binding
+}
+
+var logsKeys = LogsKeyMap{
+	Back: key.NewBinding(
+		key.WithKeys("esc", "q", "l", "backspace"),
+		key.WithHelp("esc", "back"),
+	),
+	Next: key.NewBinding(
+		key.WithKeys("tab", "right", "n"),
+		key.WithHelp("tab", "next log"),
+	),
+	Prev: key.NewBinding(
+		key.WithKeys("shift+tab", "left", "p"),
+		key.WithHelp("shift+tab", "previous log"),
+	),
+	Clear: key.NewBinding(
+		key.WithKeys("c"),
+		key.WithHelp("c", "clear"),
+	),
+	Top: key.NewBinding(
+		key.WithKeys("home", "g"),
+		key.WithHelp("home", "top"),
+	),
+	End: key.NewBinding(
+		key.WithKeys("end", "G"),
+		key.WithHelp("end", "end"),
+	),
+	Quit: key.NewBinding(
+		key.WithKeys("ctrl+c"),
 	),
 }

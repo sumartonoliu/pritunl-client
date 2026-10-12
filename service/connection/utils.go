@@ -3,6 +3,7 @@ package connection
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"os/exec"
 	"os/user"
 	"regexp"
@@ -190,6 +191,15 @@ func RestartProfiles(clean bool) (err error) {
 		conn.StopWait()
 	}
 
+	if runtime.GOOS == "darwin" {
+		e := GlobalStore.RestoreDns(false)
+		if e != nil {
+			logrus.WithFields(logrus.Fields{
+				"error": e,
+			}).Error("utils: Failed to restore scutil DNS")
+		}
+	}
+
 	if clean && runtime.GOOS == "windows" {
 		if config.Config.DisableNetClean {
 			logrus.Info("utils: Network clean disabled")
@@ -240,6 +250,11 @@ func RestartProfiles(clean bool) (err error) {
 }
 
 func Clean() (err error) {
+	if utils.IsFlatpak() {
+		nmClean()
+		return
+	}
+
 	if runtime.GOOS != "windows" {
 		return
 	}
@@ -417,4 +432,18 @@ func IsOvpn27() bool {
 	}
 
 	return false
+}
+
+func getGatewayAddr(clientAddr string) string {
+	prefix, err := netip.ParsePrefix(clientAddr)
+	if err != nil {
+		return ""
+	}
+
+	gateway := prefix.Masked().Addr().Next()
+	if !gateway.IsValid() {
+		return ""
+	}
+
+	return gateway.String()
 }

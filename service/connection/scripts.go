@@ -8,9 +8,11 @@ const (
 [ -n "${ifconfig_local}" ] && echo "ifconfig_local=${ifconfig_local}${ifconfig_netmask:+ ifconfig_netmask=${ifconfig_netmask}}"
 [ -n "${ifconfig_remote}" ] && echo "ifconfig_remote=${ifconfig_remote}"
 
-CONN_ID="$(echo ${config} | /sbin/md5)"
+CONN_ID="%s"
 
-for optionname in ${!foreign_option_*} ; do
+for _i in $(seq 1 64) ; do
+  optionname="foreign_option_${_i}"
+  [ -n "${!optionname+x}" ] || break
   option="${!optionname}"
   echo $option
   part1=$(echo "$option" | cut -d " " -f 1)
@@ -40,7 +42,6 @@ d.add SupplementalMatchDomains * ""
 remove State:/Network/Service/Pritunl/DNS
 remove Setup:/Network/Service/Pritunl/DNS
 set State:/Network/Service/Pritunl/DNS
-set Setup:/Network/Service/Pritunl/DNS
 set State:/Network/Pritunl/Connection/${CONN_ID}
 quit
 EOF
@@ -53,7 +54,6 @@ d.add SupplementalMatchDomains * ""
 remove State:/Network/Service/Pritunl/DNS
 remove Setup:/Network/Service/Pritunl/DNS
 set State:/Network/Service/Pritunl/DNS
-set Setup:/Network/Service/Pritunl/DNS
 set State:/Network/Pritunl/Connection/${CONN_ID}
 quit
 EOF
@@ -66,7 +66,6 @@ d.add SupplementalMatchDomains * ""
 remove State:/Network/Service/Pritunl/DNS
 remove Setup:/Network/Service/Pritunl/DNS
 set State:/Network/Service/Pritunl/DNS
-set Setup:/Network/Service/Pritunl/DNS
 set State:/Network/Pritunl/Connection/${CONN_ID}
 quit
 EOF
@@ -87,7 +86,6 @@ get State:/Network/Service/${SERVICE_ID}/DNS
 set State:/Network/Pritunl/Backup/${SERVICE_ID}/DNS
 d.add SearchDomains * ${DNS_SEARCH}
 set State:/Network/Service/${SERVICE_ID}/DNS
-set Setup:/Network/Service/${SERVICE_ID}/DNS
 quit
 EOF
 fi
@@ -103,9 +101,11 @@ exit 0
 [ -n "${ifconfig_local}" ] && echo "ifconfig_local=${ifconfig_local}${ifconfig_netmask:+ ifconfig_netmask=${ifconfig_netmask}}"
 [ -n "${ifconfig_remote}" ] && echo "ifconfig_remote=${ifconfig_remote}"
 
-CONN_ID="$(echo ${config} | /sbin/md5)"
+CONN_ID="%s"
 
-for optionname in ${!foreign_option_*} ; do
+for _i in $(seq 1 64) ; do
+  optionname="foreign_option_${_i}"
+  [ -n "${!optionname+x}" ] || break
   option="${!optionname}"
   echo $option
   part1=$(echo "$option" | cut -d " " -f 1)
@@ -135,7 +135,6 @@ d.add SupplementalMatchDomains * ""
 remove State:/Network/Service/Pritunl/DNS
 remove Setup:/Network/Service/Pritunl/DNS
 set State:/Network/Service/Pritunl/DNS
-set Setup:/Network/Service/Pritunl/DNS
 set State:/Network/Pritunl/Connection/${CONN_ID}
 quit
 EOF
@@ -148,7 +147,6 @@ d.add SupplementalMatchDomains * ""
 remove State:/Network/Service/Pritunl/DNS
 remove Setup:/Network/Service/Pritunl/DNS
 set State:/Network/Service/Pritunl/DNS
-set Setup:/Network/Service/Pritunl/DNS
 set State:/Network/Pritunl/Connection/${CONN_ID}
 quit
 EOF
@@ -161,7 +159,6 @@ d.add SupplementalMatchDomains * ""
 remove State:/Network/Service/Pritunl/DNS
 remove Setup:/Network/Service/Pritunl/DNS
 set State:/Network/Service/Pritunl/DNS
-set Setup:/Network/Service/Pritunl/DNS
 set State:/Network/Pritunl/Connection/${CONN_ID}
 quit
 EOF
@@ -182,7 +179,6 @@ get State:/Network/Service/${SERVICE_ID}/DNS
 set State:/Network/Pritunl/Backup/${SERVICE_ID}/DNS
 d.add SearchDomains * ${DNS_SEARCH}
 set State:/Network/Service/${SERVICE_ID}/DNS
-set Setup:/Network/Service/${SERVICE_ID}/DNS
 quit
 EOF
 fi
@@ -200,7 +196,7 @@ exit 0
 `
 	downScriptDarwin = `#!/bin/bash -e
 
-CONN_ID="$(echo ${config} | /sbin/md5)"
+CONN_ID="%s"
 
 /usr/sbin/scutil <<-EOF > /dev/null
 open
@@ -253,7 +249,9 @@ fi
 case $script_type in
 
 up)
-  for optionname in ${!foreign_option_*} ; do
+  for _i in $(seq 1 64) ; do
+    optionname="foreign_option_${_i}"
+    [ -n "${!optionname+x}" ] || break
     option="${!optionname}"
     echo $option
     part1=$(echo "$option" | cut -d " " -f 1)
@@ -360,7 +358,10 @@ get_link_info() {
 }
 
 dhcp_settings() {
-  for foreign_option in "${!foreign_option_@}"; do
+  local _i
+  for _i in $(seq 1 64); do
+    foreign_option="foreign_option_${_i}"
+    [ -n "${!foreign_option+x}" ] || break
     foreign_option_value="${!foreign_option}"
 
     [[ "$foreign_option_value" == *dhcp-option* ]] \
@@ -811,8 +812,12 @@ function do_resolved_servers {
 
 function do_resolved_domains {
     local list=""
-    for domain_var in ${!dns_search_domain_*}; do
+    local i=1
+    while :; do
+        local domain_var=dns_search_domain_${i}
+        [ -n "${!domain_var}" ] || break
         list+="${!domain_var} "
+        i=$((i+1))
     done
     local domain_var=dns_server_${n}_resolve_domain_1
     if [ -z "${!domain_var}" ]; then
@@ -978,8 +983,12 @@ function do_resolvconf {
     if [ "$script_type" = "dns-up" ]; then
         echo "setting DNS using resolvconf"
         local domains=""
-        for domain_var in ${!dns_search_domain_*}; do
+        local i=1
+        while :; do
+            local domain_var=dns_search_domain_${i}
+            [ -n "${!domain_var}" ] || break
             domains+="${!domain_var} "
+            i=$((i+1))
         done
         {
             local i=1
@@ -1024,8 +1033,13 @@ function do_resolv_conf_file {
         test -z "${!addr3_var}" || text="${text}nameserver ${!addr3_var}\n"
 
         test -z "$dns_search_domain_1" || {
-            for i in $(seq 1 6); do
-                eval domains=\"$domains\$dns_search_domain_${i} \" || break
+            local domains=""
+            local i=1
+            while :; do
+                local domain_var=dns_search_domain_${i}
+                [ -n "${!domain_var}" ] || break
+                domains+="${!domain_var} "
+                i=$((i+1))
             done
             text="${text}search $domains\n"
         }

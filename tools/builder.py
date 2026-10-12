@@ -10,6 +10,7 @@ import os
 import zlib
 import getpass
 import base64
+import xml.sax.saxutils
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import (
@@ -23,6 +24,7 @@ CONSTANTS_PATH2 = 'client/package.json'
 CONSTANTS_PATH3 = 'client/package-lock.json'
 CONSTANTS_PATH4 = 'cli/constants/constants.go'
 CONSTANTS_PATH5 = 'resources_win/setup.iss'
+CONSTANTS_PATH6 = 'flatpak/com.pritunl.client.metainfo.xml'
 STABLE_PACUR_PATH = '../pritunl-pacur'
 TEST_PACUR_PATH = '../pritunl-pacur-test'
 BUILD_KEYS_PATH = os.path.expanduser('~/data/build/pritunl_build.json')
@@ -226,7 +228,8 @@ def generate_last_modifited_etag(file_path):
     ))
 
 with open(CONSTANTS_PATH, 'r') as constants_file:
-    cur_version = re.findall('Version = "(.*?)"', constants_file.read())[0]
+    cur_version = re.findall(
+        r'Version\s*=\s*"(.*?)"', constants_file.read())[0]
 
 if cmd == 'version':
     print(get_ver(sys.argv[2]))
@@ -237,6 +240,34 @@ if cmd == 'set-version':
     # Update changes
     with open(CHANGES_PATH, 'r') as changes_file:
         changes_data = changes_file.read()
+
+    if '<%= version %>' not in changes_data:
+        print('Version placeholder does not exist in changes')
+        sys.exit(1)
+
+    new_changes = []
+    in_new_changes = False
+    for line in changes_data.splitlines():
+        line = line.strip()
+
+        if line == '<%= version %>':
+            in_new_changes = True
+            continue
+
+        if not in_new_changes:
+            continue
+
+        if line[:7] == 'Version':
+            break
+
+        if not line or line[0] == '-':
+            continue
+
+        new_changes.append(line)
+
+    if not new_changes:
+        print('New changes do not exist in changes')
+        sys.exit(1)
 
     with open(CHANGES_PATH, 'w') as changes_file:
         ver_date_str = 'Version ' + new_version.replace(
@@ -252,8 +283,8 @@ if cmd == 'set-version':
 
     with open(CONSTANTS_PATH, 'w') as constants_file:
         constants_file.write(re.sub(
-            '(Version = ".*?")',
-            'Version = "%s"' % new_version,
+            r'(Version\s*=\s*)".*?"',
+            r'\g<1>"%s"' % new_version,
             constants_data,
             count=1,
         ))
@@ -285,8 +316,8 @@ if cmd == 'set-version':
 
     with open(CONSTANTS_PATH4, 'w') as constants_file:
         constants_file.write(re.sub(
-            '(Version = ".*?")',
-            'Version = "%s"' % new_version,
+            r'(Version\s*=\s*)".*?"',
+            r'\g<1>"%s"' % new_version,
             constants_data,
             count=1,
         ))
@@ -300,6 +331,34 @@ if cmd == 'set-version':
             'MyAppVersion "%s"' % new_version,
             constants_data,
             count=1,
+        ))
+
+    with open(CONSTANTS_PATH6, 'r') as constants_file:
+        constants_data = constants_file.read()
+
+    if '<releases>\n' not in constants_data:
+        print('Releases do not exist in metainfo')
+        sys.exit(1)
+
+    release_xml = '    <release version="%s" date="%s">\n' % (
+        new_version, cur_date.strftime('%Y-%m-%d'))
+    release_xml += '      <url type="details">' + \
+        'https://github.com/pritunl/pritunl-client/blob/%s/CHANGES' % (
+            new_version) + '</url>\n'
+    release_xml += '      <description>\n'
+    release_xml += '        <ul>\n'
+    for change in new_changes:
+        release_xml += '          <li>%s</li>\n' % xml.sax.saxutils.escape(
+            change)
+    release_xml += '        </ul>\n'
+    release_xml += '      </description>\n'
+    release_xml += '    </release>\n'
+
+    with open(CONSTANTS_PATH6, 'w') as constants_file:
+        constants_file.write(constants_data.replace(
+            '<releases>\n',
+            '<releases>\n' + release_xml,
+            1,
         ))
 
     # Check for duplicate version
@@ -357,6 +416,7 @@ if cmd == 'set-version':
     subprocess.check_call(['git', 'add', CONSTANTS_PATH3])
     subprocess.check_call(['git', 'add', CONSTANTS_PATH4])
     subprocess.check_call(['git', 'add', CONSTANTS_PATH5])
+    subprocess.check_call(['git', 'add', CONSTANTS_PATH6])
     subprocess.check_call(['git', 'commit', '-S', '-m', 'Create new release'])
     subprocess.check_call(['git', 'push'])
 

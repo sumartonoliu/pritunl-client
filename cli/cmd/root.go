@@ -1,14 +1,25 @@
 package cmd
 
 import (
-	"github.com/dropbox/godropbox/errors"
 	"github.com/pritunl/pritunl-client/cli/iface"
+	"github.com/pritunl/pritunl-client/cli/service"
+	"github.com/pritunl/pritunl-client/cli/utils"
 	"github.com/spf13/cobra"
 )
 
 var RootCmd = &cobra.Command{
 	Use:   "pritunl-client",
 	Short: "Pritunl Client Command Line Tool",
+	Long: "Pritunl Client Command Line Tool\n\n" +
+		"Run without a command to open the interactive terminal interface.",
+	SilenceErrors: true,
+	SilenceUsage:  true,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if cmd.Name() == VersionCmd.Name() {
+			return nil
+		}
+		return service.EnsureRunning()
+	},
 	Run: func(cmd *cobra.Command, args []string) {
 		err := iface.Iface()
 		cobra.CheckErr(err)
@@ -16,10 +27,8 @@ var RootCmd = &cobra.Command{
 }
 
 func Execute() {
-	err := RootCmd.Execute()
-	if err != nil {
-		cobra.CheckErr(errors.Wrap(err, "cmd: Failed to execute root command"))
-	}
+	cobra.CheckErr(utils.FlatpakInit())
+	cobra.CheckErr(RootCmd.Execute())
 }
 
 func init() {
@@ -32,6 +41,6 @@ func init() {
 	RootCmd.AddCommand(ListCmd)
 	RootCmd.AddCommand(StartCmd)
 	RootCmd.AddCommand(StopCmd)
-	RootCmd.AddCommand(WatchCmd)
+	RootCmd.AddCommand(ConvertCmd)
 	RootCmd.AddCommand(StatusCmd)
 }

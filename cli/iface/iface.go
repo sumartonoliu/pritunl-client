@@ -2,29 +2,40 @@ package iface
 
 import (
 	"os"
-	"time"
+	"path/filepath"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/dropbox/godropbox/errors"
 	"github.com/pritunl/pritunl-client/cli/errortypes"
+	"github.com/pritunl/pritunl-client/cli/event"
+	"github.com/pritunl/pritunl-client/cli/utils"
 	"github.com/pritunl/tools/logger"
 )
 
 func LoggerFile() (err error) {
+	dataPath := utils.GetDataPath()
+
+	err = os.MkdirAll(dataPath, 0700)
+	if err != nil {
+		err = &errortypes.WriteError{
+			errors.Wrap(err, "iface: Failed to create data directory"),
+		}
+		return
+	}
+
 	file, err := os.OpenFile(
-		"./pritunl-client.log",
+		filepath.Join(dataPath, "pritunl.log"),
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY,
 		0644,
 	)
 	if err != nil {
 		err = &errortypes.WriteError{
-			errors.Wrap(err, "agent: Failed to create log file"),
+			errors.Wrap(err, "iface: Failed to create log file"),
 		}
 		return
 	}
 
 	logger.Init(
-		logger.SetMaxLimit(2*time.Hour),
 		logger.SetIcons(true),
 	)
 
@@ -42,13 +53,13 @@ func Iface() (err error) {
 		return
 	}
 
-	model := NewModel()
+	listener := event.NewListener()
+	defer listener.Close()
 
-	prog := tea.NewProgram(
-		model,
-		tea.WithAltScreen(),
-		//tea.WithMouseCellMotion(),
-	)
+	model := NewModel(listener)
+
+	// Alt screen and mouse mode are declared by the model view
+	prog := tea.NewProgram(model)
 
 	_, err = prog.Run()
 	if err != nil {

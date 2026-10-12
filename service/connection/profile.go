@@ -18,6 +18,7 @@ type Profile struct {
 	SyncHosts          []string                    `json:"sync_hosts"`
 	SyncToken          string                      `json:"sync_token"`
 	SyncSecret         string                      `json:"sync_secret"`
+	SyncHash           string                      `json:"sync_hash"`
 	Data               string                      `json:"data"`
 	Username           string                      `json:"username"`
 	Password           string                      `json:"password"`
@@ -29,6 +30,7 @@ type Profile struct {
 	DeviceAuth         bool                        `json:"device_auth"`
 	DisableGateway     bool                        `json:"disable_gateway"`
 	DisableDns         bool                        `json:"disable_dns"`
+	DisableIpv6        bool                        `json:"disable_ipv6"`
 	Dco                bool                        `json:"dco"`
 	DebugOutput        bool                        `json:"debug_output"`
 	RestrictClient     bool                        `json:"restrict_client"`
@@ -51,6 +53,7 @@ func (p *Profile) Fields() logrus.Fields {
 		"profile_device_auth":      p.DeviceAuth,
 		"profile_disable_gateway":  p.DisableGateway,
 		"profile_disable_dns":      p.DisableDns,
+		"profile_disable_ipv6":     p.DisableIpv6,
 		"profile_dco":              p.Dco,
 		"profile_geo_sort":         p.IsGeoSort(),
 		"profile_force_connect":    p.ForceConnect,
@@ -64,6 +67,10 @@ func (p *Profile) Fields() logrus.Fields {
 
 func (p *Profile) IsGeoSort() bool {
 	return p.GeoSort != ""
+}
+
+func (p *Profile) GetRemotePriority(host string) int {
+	return p.RemotesData[host].Priority
 }
 
 func (p *Profile) Sync() {
@@ -113,6 +120,7 @@ func (p *Profile) ImportSystemProfile(sprfl *sprofile.Sprofile) {
 	p.SyncHosts = sprfl.SyncHosts
 	p.SyncToken = sprfl.SyncToken
 	p.SyncSecret = sprfl.SyncSecret
+	p.SyncHash = sprfl.SyncHash
 	p.Data = sprfl.OvpnData
 	p.Username = "pritunl"
 	p.Password = sprfl.Password
@@ -124,6 +132,7 @@ func (p *Profile) ImportSystemProfile(sprfl *sprofile.Sprofile) {
 	p.DeviceAuth = sprfl.DeviceAuth
 	p.DisableGateway = sprfl.DisableGateway
 	p.DisableDns = sprfl.DisableDns
+	p.DisableIpv6 = sprfl.DisableIpv6
 	p.Dco = sprfl.Dco
 	p.DebugOutput = sprfl.DebugOutput
 	p.RestrictClient = sprfl.RestrictClient

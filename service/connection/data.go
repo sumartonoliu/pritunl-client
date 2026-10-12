@@ -83,6 +83,34 @@ type Route struct {
 	NetGateway bool   `json:"net_gateway"`
 }
 
+func (r *Route) Validate(ipv6 bool) (err error) {
+	network, ok := parseWgNetwork(r.Network)
+	if !ok || network.Addr().Is6() != ipv6 {
+		err = &errortypes.ParseError{
+			errors.New("connection: Invalid route network"),
+		}
+		return
+	}
+	r.Network = network.Masked().String()
+
+	if r.NextHop != "" {
+		nextHop, ok := parseWgIp(r.NextHop)
+		if !ok || nextHop.Is6() != ipv6 {
+			err = &errortypes.ParseError{
+				errors.New("connection: Invalid route next hop"),
+			}
+			return
+		}
+		r.NextHop = nextHop.String()
+	}
+
+	if r.Metric < 0 {
+		r.Metric = 0
+	}
+
+	return
+}
+
 func (d *Data) Fields() logrus.Fields {
 	remotes := []string{}
 	if d.Remotes != nil {
@@ -251,6 +279,7 @@ func (d *Data) ParseProfile() (err error) {
 					Host:      lineSpl[1],
 					OvpnPort:  ovpnPort,
 					OvpnProto: ovpnProto,
+					Priority:  d.conn.Profile.GetRemotePriority(lineSpl[1]),
 					Type:      OvpnRemote,
 				}
 				if !remoteHosts.Contains(remote.Host) {
@@ -287,6 +316,7 @@ func (d *Data) ParseProfile() (err error) {
 			Host:      syncUrl.Host,
 			OvpnPort:  defaultOvpnPort,
 			OvpnProto: defaultOvpnProto,
+			Priority:  d.conn.Profile.GetRemotePriority(syncUrl.Hostname()),
 			Type:      SyncRemote,
 		}
 		if !remoteHosts.Contains(remote.Host) {
@@ -362,6 +392,11 @@ func (d *Data) ParseProfile() (err error) {
 		}
 
 		remotes = newRemotes
+	}
+
+	if remotes.HasPriority() {
+		sortMethod += "+priority"
+		remotes.SortPriority()
 	}
 
 	logrus.WithFields(logrus.Fields{
@@ -481,6 +516,22 @@ func (d *Data) GetAuthToken() (authToken *AuthToken, err error) {
 	d.authToken = authToken
 
 	return
+}
+
+type SyncEventData struct {
+	Id   string `json:"id"`
+	Data string `json:"data"`
+}
+
+func (d *Data) SendSyncEvent(body []byte) {
+	evt := &event.Event{
+		Type: "profile_sync",
+		Data: &SyncEventData{
+			Id:   d.conn.Profile.Id,
+			Data: string(body),
+		},
+	}
+	evt.Init()
 }
 
 func (d *Data) SendProfileEvent(evtType string) {

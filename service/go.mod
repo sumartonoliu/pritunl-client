@@ -1,18 +1,20 @@
 module github.com/pritunl/pritunl-client/service
 
-go 1.25.0
+go 1.26.7
 
 require (
 	github.com/dropbox/godropbox v0.0.0-20230623171840-436d2007a9fd
 	github.com/gin-gonic/gin v1.10.0
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/google/go-tpm v0.9.1
 	github.com/google/go-tpm-tools v0.4.4
+	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/hectane/go-acl v0.0.0-20230122075934-ca0b05cb1adb
 	github.com/judwhite/go-svc v1.2.1
 	github.com/sirupsen/logrus v1.9.3
-	golang.org/x/crypto v0.48.0
-	golang.org/x/sys v0.41.0
+	golang.org/x/crypto v0.58.0
+	golang.org/x/sys v0.49.0
 )
 
 require (
@@ -31,7 +33,6 @@ require (
 	github.com/google/go-sev-guest v0.11.1 // indirect
 	github.com/google/go-tdx-guest v0.3.1 // indirect
 	github.com/google/logger v1.1.1 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.8 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
@@ -45,8 +46,8 @@ require (
 	github.com/ugorji/go/codec v1.2.12 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/arch v0.10.0 // indirect
-	golang.org/x/net v0.51.0 // indirect
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

@@ -4,7 +4,10 @@ import (
 	"runtime"
 	"runtime/debug"
 
+	"github.com/dropbox/godropbox/errors"
 	"github.com/pritunl/pritunl-client/service/config"
+	"github.com/pritunl/pritunl-client/service/constants"
+	"github.com/pritunl/pritunl-client/service/errortypes"
 	"github.com/pritunl/pritunl-client/service/event"
 	"github.com/pritunl/pritunl-client/service/sprofile"
 	"github.com/pritunl/pritunl-client/service/utils"
@@ -121,6 +124,19 @@ func (c *Connection) Start(opts Options) (err error) {
 		return
 	}
 
+	if c.Profile.Mode != WgMode && constants.Flatpak {
+		err = &errortypes.UnknownError{
+			errors.New("connection: OpenVPN mode not supported in Flatpak, " +
+				"WireGuard mode required"),
+		}
+		logrus.WithFields(c.Fields(logrus.Fields{
+			"error": err,
+		})).Error("connection: Start error")
+		c.Data.SendProfileEvent("configuration_error")
+		c.State.Close()
+		return
+	}
+
 	if c.Profile.Mode == WgMode {
 		err = c.Wg.Start()
 	} else {
@@ -133,6 +149,20 @@ func (c *Connection) Start(opts Options) (err error) {
 		c.State.Close()
 		return
 	}
+
+	go func() {
+		defer func() {
+			panc := recover()
+			if panc != nil {
+				logrus.WithFields(c.Fields(logrus.Fields{
+					"trace": string(debug.Stack()),
+					"panic": panc,
+				})).Error("connection: Profile sync panic")
+			}
+		}()
+
+		c.SyncConn()
+	}()
 
 	return
 }
@@ -197,7 +227,7 @@ func (c *Connection) Ready() bool {
 }
 
 func NewConnection(prfl *Profile) (conn *Connection, err error) {
-	prfl.Id = utils.FilterStrN(prfl.Id, 128)
+	prfl.Id = utils.FilterId(prfl.Id)
 
 	conn = &Connection{
 		Id:      prfl.Id,
