@@ -3,11 +3,14 @@ import path from "path"
 import fs from "fs"
 import electron from "electron"
 import * as Utils from "./Utils";
+import * as Logger from "./Logger"
 import * as Service from "./Service"
 import * as Constants from "./Constants"
 import Config from "./Config"
 import * as Errors from "../app/Errors";
 import * as Tpm from "./Tpm"
+import * as Daemon from "./Daemon"
+import * as ProfileSync from "./ProfileSync"
 
 let tray: electron.Tray
 let awaken: boolean
@@ -60,6 +63,21 @@ process.on("unhandledRejection", function (error) {
 		electron.app.quit()
 	})
 })
+
+if (Constants.flatpakError) {
+	readyError = Constants.flatpakError
+}
+
+if (!electron.app.requestSingleInstanceLock()) {
+	electron.app.quit()
+} else {
+	electron.app.on("second-instance", (): void => {
+		if (ready) {
+			let main = new Main()
+			main.run()
+		}
+	})
+}
 
 electron.ipcMain.handle(
 	"processing",
@@ -124,6 +142,10 @@ electron.ipcMain.on(
 			}
 		} else if (msg === "download-update") {
 			Utils.openLink("https://client.pritunl.com/#install")
+		} else if (msg === "open-link") {
+			Utils.openLink(data)
+		} else if (msg === "copy") {
+			electron.clipboard.writeText(data)
 		}
 	},
 )
@@ -151,7 +173,9 @@ class Main {
 		let minWidth = 430
 		let minHeight = 520
 
-		if (process.platform === "win32" || Config.frameless) {
+		if (process.platform === "win32" || Config.frameless ||
+			(Constants.flatpak && Config.frameless !== false)) {
+
 			frameless = true
 			framelessClient = true
 
@@ -190,11 +214,11 @@ class Main {
 			icon: path.join(__dirname, "..", "logo.png"),
 			titleBarStyle: titleBarStyle as any,
 			frame: !frameless,
+			transparent: process.platform === "linux" && frameless,
 			trafficLightPosition: {
 				x: 14,
 				y: 12,
 			},
-			autoHideMenuBar: true,
 			fullscreen: false,
 			show: false,
 			width: width,
@@ -208,6 +232,8 @@ class Main {
 				contextIsolation: false,
 			}
 		})
+
+		this.window.setMenuBarVisibility(false)
 
 		this.window.webContents.on("context-menu", (
 				evt: electron.Event, params: electron.ContextMenuParams) => {
@@ -268,6 +294,9 @@ class Main {
 
 		let indexUrl = "file://" + path.join(__dirname, "..", "index.html")
 		indexUrl += "?dev=" + (!Constants.production ? "true" : "false")
+		indexUrl += "&flatpak=" + (Constants.flatpak ? "true" : "false")
+		indexUrl += "&flatpakId=" + encodeURIComponent(Constants.flatpakId)
+		indexUrl += "&flatpakRunDir=" + encodeURIComponent(Constants.flatpakRunDir)
 		indexUrl += "&dataPath=" + encodeURIComponent(
 			electron.app.getPath("userData"))
 		indexUrl += "&frameless=" + (framelessClient ? "true" : "false")
@@ -403,52 +432,59 @@ function init() {
 	}
 
 	Config.load().then(() => {
-		Service.connect().then(() => {
-			if (process.argv.indexOf("--no-main") !== -1) {
-				if (Config.disable_tray_icon) {
-					electron.app.quit()
-					return
-				}
-			} else {
-				let main = new Main()
-				main.run()
-			}
-
-			initAppMenu()
-
-			if (!Config.disable_tray_icon) {
-				initTray()
-			}
-
-			Service.subscribe((event: Service.Event): void => {
-				if (event.type === "connected") {
-					if (tray) {
-						tray.setImage(getTrayIcon(true))
+		Daemon.ensure().catch((err) => {
+			Logger.error(err)
+		}).then(() => {
+			Service.connect().then(() => {
+				if (process.argv.indexOf("--no-main") !== -1) {
+					if (Config.disable_tray_icon) {
+						electron.app.quit()
+						return
 					}
-				} else if (event.type === "disconnected") {
-					if (tray) {
-						tray.setImage(getTrayIcon(false))
-					}
-				} else if (event.type === "wakeup") {
-					Service.send("awake")
-
+				} else {
 					let main = new Main()
 					main.run()
-				} else if (event.type === "shutdown") {
-					if (process.argv.indexOf("--no-shutdown") === -1) {
-						electron.app.quit()
-					}
-				} else if (event.type === "sso_auth") {
-					if (event.data.open !== false) {
-						Utils.openLink(event.data.url)
-					}
-				} else if (event.type === "tpm_open") {
-					Tpm.open(event.data.id, event.data.private_key)
-				} else if (event.type === "tpm_sign") {
-					Tpm.sign(event.data.id, event.data.sign_data)
-				} else if (event.type === "tpm_close") {
-					Tpm.close(event.data.id)
 				}
+
+				initAppMenu()
+
+				if (!Config.disable_tray_icon) {
+					initTray()
+				}
+
+				Daemon.checkUpgrade().catch((err) => {
+					Logger.error(err)
+				})
+
+				Service.subscribe((event: Service.Event): void => {
+					if (event.type === "connected") {
+						if (tray) {
+							tray.setImage(getTrayIcon(true))
+						}
+					} else if (event.type === "disconnected") {
+						if (tray) {
+							tray.setImage(getTrayIcon(false))
+						}
+					} else if (event.type === "wakeup") {
+						Service.send("awake")
+
+						let main = new Main()
+						main.run()
+					} else if (event.type === "shutdown") {
+						if (process.argv.indexOf("--no-shutdown") === -1) {
+							electron.app.quit()
+						}
+					} else if (event.type === "sso_auth") {
+						if (event.data.open !== false) {
+							Utils.openLink(event.data.url)
+						}
+					} else if (event.type === "tpm_open" ||
+							event.type === "tpm_sign") {
+						Tpm.handle(event.type, event.data)
+					} else if (event.type === "profile_sync") {
+						ProfileSync.handle(event.data.id, event.data.data)
+					}
+				})
 			})
 		})
 	})
@@ -560,6 +596,13 @@ electron.app.on("ready", (): void => {
 		fs.exists(profilesPth, function(exists) {
 		if (!exists) {
 			fs.mkdir(profilesPth, function() {})
+		}
+	})
+
+	let zerosPth = path.join(electron.app.getPath("userData"), "zero")
+	fs.exists(zerosPth, function(exists) {
+		if (!exists) {
+			fs.mkdir(zerosPth, function() {})
 		}
 	})
 

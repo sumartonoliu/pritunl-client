@@ -262,6 +262,7 @@ export default class ProfileConnect extends React.Component<Props, State> {
 			sync_hosts: prfl.sync_hosts,
 			sync_token: prfl.sync_token,
 			sync_secret: prfl.sync_secret,
+			sync_hash: prfl.sync_hash,
 			username: username,
 			password: password,
 			remotes_data: prfl.remotes_data,
@@ -272,6 +273,7 @@ export default class ProfileConnect extends React.Component<Props, State> {
 			device_auth: prfl.device_auth,
 			disable_gateway: prfl.disable_gateway,
 			disable_dns: prfl.disable_dns,
+			disable_ipv6: prfl.disable_ipv6,
 			dco: prfl.dco,
 			debug_output: prfl.debug_output,
 			force_dns: prfl.force_dns,
@@ -378,8 +380,9 @@ export default class ProfileConnect extends React.Component<Props, State> {
 
 	render(): JSX.Element {
 		let connected = this.connected()
-		let hasWg = Constants.state.wg && this.props.profile.wg
-		let hideOvpn = this.props.profile.hide_ovpn
+		let hasWg = (Constants.state.wg &&
+			this.props.profile.wg) || Constants.flatpak
+		let hideOvpn = this.props.profile.hide_ovpn || Constants.flatpak
 
 		let buttonClass = ""
 		let buttonLabel = ""

@@ -33,6 +33,20 @@ func (r Remotes) GetFormatted() (remotes []string) {
 	return
 }
 
+func (r Remotes) Single() bool {
+	if len(r) == 0 {
+		return false
+	}
+
+	for _, remote := range r[1:] {
+		if remote != r[0] {
+			return false
+		}
+	}
+
+	return true
+}
+
 type Ovpn struct {
 	EnvId             string
 	EnvName           string
@@ -72,7 +86,9 @@ type Ovpn struct {
 
 	DisableGateway bool
 	DisableDns     bool
+	DisableIpv6    bool
 	Dco            bool
+	RemapUsr1      bool
 }
 
 func (o *Ovpn) Export(chown string) string {
@@ -95,6 +111,9 @@ func (o *Ovpn) Export(chown string) string {
 	output += fmt.Sprintf("dev %s\n", o.Dev)
 	output += fmt.Sprintf("dev-type %s\n", o.DevType)
 	output += "connect-retry-max 1\n"
+	if o.RemapUsr1 {
+		output += "remap-usr1 SIGTERM\n"
+	}
 	for _, remote := range o.Remotes {
 		output += fmt.Sprintf(
 			"remote %s %d %s\n",
@@ -182,6 +201,14 @@ func (o *Ovpn) Export(chown string) string {
 		output += "pull-filter ignore \"route-ipv6 2000::/3\"\n"
 	}
 
+	if o.DisableIpv6 {
+		output += "pull-filter ignore \"ifconfig-ipv6\"\n"
+		output += "pull-filter ignore \"route-ipv6\"\n"
+		output += "pull-filter ignore \"redirect-gateway ipv6\"\n"
+		output += "pull-filter ignore \"redirect-gateway-ipv6\"\n"
+		output += "pull-filter ignore \"tun-ipv6\"\n"
+	}
+
 	if o.DisableDns {
 		output += "pull-filter ignore \"dhcp-option\"\n"
 	}
@@ -234,11 +261,12 @@ func (o *Ovpn) Export(chown string) string {
 }
 
 func Import(data string, remotes []Remote,
-	disableGateway, disableDns, dco, debugOutput bool) (o *Ovpn) {
+	disableGateway, disableDns, disableIpv6, dco, debugOutput bool) (o *Ovpn) {
 
 	o = &Ovpn{
 		DisableGateway: disableGateway,
 		DisableDns:     disableDns,
+		DisableIpv6:    disableIpv6,
 		Dco:            dco,
 	}
 

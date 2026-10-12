@@ -11,6 +11,7 @@ import * as MiscUtils from "../app/utils/MiscUtils";
 export interface Event {
 	id: string
 	type: string
+	timestamp?: number
 	data?: any
 }
 
@@ -55,6 +56,39 @@ export function sync(): Promise<boolean> {
 			}, (err) => {
 				Logger.error(err)
 				resolve(false)
+			})
+	})
+}
+
+export function version(): Promise<string> {
+	return new Promise<string>(async (resolve) => {
+		try {
+			await Auth.load()
+		} catch(err) {
+			Logger.error(err)
+			resolve("")
+			return
+		}
+
+		RequestUtils
+			.get("/state")
+			.set("Auth-Token", Auth.token)
+			.set("User-Agent", "pritunl")
+			.end()
+			.then((resp: Request.Response) => {
+				if (resp.status === 200) {
+					let data = resp.jsonPassive() as any
+					if (data) {
+						resolve(data.version || "")
+					} else {
+						resolve("")
+					}
+				} else {
+					resolve("")
+				}
+			}, (err) => {
+				Logger.error(err)
+				resolve("")
 			})
 	})
 }

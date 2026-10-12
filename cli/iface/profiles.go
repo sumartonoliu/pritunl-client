@@ -5,58 +5,123 @@ import (
 	"io"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/pritunl/pritunl-client/cli/sprofile"
+)
+
+const (
+	itemFrameHeight = 4
+	itemContentLeft = 3
 )
 
 type Profile struct {
-	Id              string `json:"id"`
-	Name            string `json:"name"`
-	User            string `json:"user"`
-	Organization    string `json:"organization"`
-	Server          string `json:"server"`
-	Wg              bool   `json:"wg"`
-	Active          bool   `json:"active"`
-	State           string `json:"state"`
-	RunState        string `json:"run_state"`
-	RegistrationKey string `json:"registration_key"`
-	Connected       bool   `json:"connected"`
-	Uptime          int64  `json:"uptime"`
-	StatusLabel     string `json:"status_label"`
-	Status          string `json:"status"`
-	ServerAddress   string `json:"server_address"`
-	ClientAddress   string `json:"client_address"`
+	Id              string
+	Name            string
+	User            string
+	Organization    string
+	Server          string
+	Wg              bool
+	Active          bool
+	State           string
+	RunState        string
+	RegistrationKey string
+	Connected       bool
+	Uptime          int64
+	StatusLabel     string
+	Status          string
+	ServerAddress   string
+	ClientAddress   string
 }
 
 var (
 	itemStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("#361da3")).
-			Padding(0, 1)
-
+			Padding(0, 1).
+			MarginLeft(1)
 	itemSelectedStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(lipgloss.Color("#a1cdff")).
-				Padding(0, 1)
+				Padding(0, 1).
+				MarginLeft(1)
 	itemColStyle = lipgloss.NewStyle().
 			Align(lipgloss.Left)
 	itemTitleStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#4a8cf7")).
 			Bold(true)
+	itemTypeStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#6B7280"))
 	greenStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#10B981"))
 	redStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#EF4444"))
 	yellowSytle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#fffb00"))
+
+	itemButtonStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Background(lipgloss.Color("#3B82F6")).
+			Padding(0, 1).
+			MarginRight(1)
+	itemButtonDangerStyle = itemButtonStyle.
+				Background(lipgloss.Color("#EF4444"))
+	itemButtonMutedStyle = itemButtonStyle.
+				Background(lipgloss.Color("#4B5563"))
 )
 
+// itemButton is a rendered profile card button and its column position
+// relative to the card content area.
+type itemButton struct {
+	item  MenuItem
+	text  string
+	x     int
+	width int
+}
+
 type ListItem struct {
+	sprfl   *sprofile.Sprofile
 	profile Profile
+}
+
+func NewListItem(sprfl *sprofile.Sprofile) ListItem {
+	statusLabel, status := sprfl.FormatedStatus()
+
+	prfl := Profile{
+		Id:              sprfl.Id,
+		Name:            sprfl.FormatedNameShort(),
+		User:            sprfl.User,
+		Organization:    sprfl.Organization,
+		Server:          sprfl.Server,
+		Wg:              sprfl.Wg,
+		Active:          sprfl.State,
+		State:           sprfl.FormatedState(),
+		RunState:        sprfl.FormatedRunState(),
+		RegistrationKey: sprfl.RegistrationKey,
+		StatusLabel:     statusLabel,
+		Status:          status,
+	}
+
+	if sprfl.Profile != nil {
+		prfl.Connected = sprfl.Profile.ClientAddr != ""
+		prfl.Uptime = sprfl.Profile.Uptime()
+		prfl.ServerAddress = sprfl.Profile.ServerAddr
+		prfl.ClientAddress = sprfl.Profile.ClientAddr
+	}
+
+	return ListItem{
+		sprfl:   sprfl,
+		profile: prfl,
+	}
 }
 
 func (i ListItem) Profile() Profile {
 	return i.profile
+}
+
+func (i ListItem) Sprofile() *sprofile.Sprofile {
+	return i.sprfl
 }
 
 func (i ListItem) FilterValue() string {
@@ -64,35 +129,74 @@ func (i ListItem) FilterValue() string {
 }
 
 func (i ListItem) Title() string {
-	return itemTitleStyle.Render(i.profile.Name)
+	return itemTitleStyle.Render(i.profile.Name) +
+		itemTypeStyle.Render("  "+i.sprfl.FormatedType())
+}
+
+// Buttons returns the card action buttons, the connect and disconnect
+// buttons follow the same rules as the menu bar.
+func (i ListItem) Buttons() []itemButton {
+	items := append(profileActions(i.sprfl),
+		MenuItem{Title: "Settings", Key: "s"})
+
+	buttons := []itemButton{}
+	x := 0
+	for _, item := range items {
+		style := itemButtonStyle
+		switch item.Key {
+		case "d":
+			style = itemButtonDangerStyle
+		case "s":
+			style = itemButtonMutedStyle
+		}
+
+		text := style.Render(item.Title)
+		width := lipgloss.Width(text)
+		buttons = append(buttons, itemButton{
+			item:  item,
+			text:  text,
+			x:     x,
+			width: width - style.GetMarginRight(),
+		})
+		x += width
+	}
+
+	return buttons
+}
+
+// ButtonsView renders the card button row.
+func (i ListItem) ButtonsView() string {
+	texts := []string{}
+	for _, btn := range i.Buttons() {
+		texts = append(texts, btn.text)
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, texts...)
+}
+
+// ButtonAt returns the key press for the button at the column relative
+// to the card content area.
+func (i ListItem) ButtonAt(x int) (tea.KeyPressMsg, bool) {
+	for _, btn := range i.Buttons() {
+		if x >= btn.x && x < btn.x+btn.width {
+			return btn.item.KeyMsg()
+		}
+	}
+	return tea.KeyPressMsg{}, false
 }
 
 func (i ListItem) Body(width int) string {
 	rows := []string{}
 
-	colWidth := width - 5
+	colWidth := width - 6
 	style := itemColStyle.Width(colWidth)
 
 	row := style.Render(renderCol(colWidth, "User: %s", i.profile.User))
 	rows = append(rows, row)
 
-	var statusStyle lipgloss.Style
-	if i.profile.Active {
-		statusStyle = greenStyle
-	} else {
-		statusStyle = redStyle
-	}
-
-	row = style.Render(fmt.Sprintf(
-		"%s: %s",
-		i.profile.StatusLabel,
-		statusStyle.Render(renderCol(colWidth-12, i.profile.Status)),
-	))
-
+	row = style.Render(i.statusRow(colWidth))
 	rows = append(rows, row)
 
-	row = style.Render(renderCol(colWidth, "Server: %s",
-		i.profile.ServerAddress))
+	row = style.Render(renderCol(colWidth, "Server: %s", i.profile.Server))
 	rows = append(rows, row)
 	row = renderCol(colWidth, "Organization: %s", i.profile.Organization)
 	rows = append(rows, row)
@@ -119,49 +223,27 @@ func (i ListItem) Body(width int) string {
 	))
 	rows = append(rows, row)
 
-	if i.profile.RegistrationKey != "" {
-		row = style.Render(yellowSytle.Render(renderCol(
-			colWidth,
-			"Device Registration Required",
-		)))
-		rows = append(rows, row)
-		row = style.Render(yellowSytle.Render(renderCol(
-			colWidth,
-			"Device Registration Key: %s",
-			i.profile.RegistrationKey,
-		)))
-		rows = append(rows, row)
-	}
-
 	return strings.Join(rows, "\n")
 }
 
 func (i ListItem) BodySplit(width int) string {
 	rows := []string{}
 
-	colWidth := min((width-5)/2, 60)
-	style := itemColStyle.Width(colWidth)
+	available := min(width-6, 160)
+	rightWidth := available / 2
+	leftColWidth := available - rightWidth
+	leftStyle := itemColStyle.Width(leftColWidth)
+	rightStyle := itemColStyle.Width(rightWidth)
+	leftWidth := leftColWidth - 1
 
-	left := style.Render(renderCol(colWidth, "User: %s", i.profile.User))
-
-	var statusStyle lipgloss.Style
-	if i.profile.Active {
-		statusStyle = greenStyle
-	} else {
-		statusStyle = redStyle
-	}
-
-	right := style.Render(fmt.Sprintf(
-		"%s: %s",
-		i.profile.StatusLabel,
-		statusStyle.Render(
-			renderCol(colWidth-12, i.profile.Status)),
-	))
-
+	left := leftStyle.Render(renderCol(leftWidth, "User: %s", i.profile.User))
+	right := rightStyle.Render(i.statusRow(rightWidth))
 	rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Left, left, right))
 
-	left = style.Render(renderCol(colWidth, "Server: %s", i.profile.Server))
-	right = renderCol(colWidth, "Organization: %s", i.profile.Organization)
+	left = leftStyle.Render(renderCol(
+		leftWidth, "Server: %s", i.profile.Server))
+	right = rightStyle.Render(renderCol(
+		rightWidth, "Organization: %s", i.profile.Organization))
 	rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Left, left, right))
 
 	serverAddr := i.profile.ServerAddress
@@ -173,32 +255,18 @@ func (i ListItem) BodySplit(width int) string {
 		clientAddr = "-"
 	}
 
-	left = style.Render(renderCol(
-		colWidth,
+	left = leftStyle.Render(renderCol(
+		leftWidth,
 		"Server Address: %s",
 		serverAddr,
 	))
-	right = style.Render(renderCol(
-		colWidth,
+	right = rightStyle.Render(renderCol(
+		rightWidth,
 		"Client Address: %s",
 		clientAddr,
 	))
 	rows = append(rows, lipgloss.JoinHorizontal(
 		lipgloss.Left, left, right))
-
-	if i.profile.RegistrationKey != "" {
-		left = style.Render(yellowSytle.Render(renderCol(
-			colWidth,
-			"Device Registration Required",
-		)))
-		right = style.Render(yellowSytle.Render(renderCol(
-			colWidth,
-			"Device Registration Key: %s",
-			i.profile.RegistrationKey,
-		)))
-		rows = append(rows, lipgloss.JoinHorizontal(
-			lipgloss.Left, left, right))
-	}
 
 	return strings.Join(rows, "\n")
 }
@@ -215,9 +283,9 @@ func (d *ListDelegate) SetWidth(w int) {
 
 func (d ListDelegate) Height() int {
 	if d.split {
-		return 6
+		return itemFrameHeight + 3
 	}
-	return 9
+	return itemFrameHeight + 6
 }
 
 func (d *ListDelegate) SetSplit(x bool) {
@@ -250,7 +318,37 @@ func (d ListDelegate) Render(w io.Writer, model list.Model,
 		lipgloss.Left,
 		listItem.Title(),
 		body,
+		listItem.ButtonsView(),
 	)
 
 	fmt.Fprint(w, style.Render(content))
+}
+
+func (i ListItem) statusRow(colWidth int) string {
+	if i.profile.RegistrationKey != "" && !i.profile.Connected {
+		label := "Registration Required"
+		return fmt.Sprintf(
+			"%s: %s",
+			yellowSytle.Render(label),
+			yellowSytle.Bold(true).Render(renderCol(
+				colWidth-len(label)-2, "%s", i.profile.RegistrationKey)),
+		)
+	}
+
+	return fmt.Sprintf(
+		"%s: %s",
+		i.profile.StatusLabel,
+		i.statusStyle().Render(renderCol(
+			colWidth-len(i.profile.StatusLabel)-2, "%s", i.profile.Status)),
+	)
+}
+
+func (i ListItem) statusStyle() lipgloss.Style {
+	if !i.profile.Active {
+		return redStyle
+	}
+	if i.profile.Connected && i.profile.StatusLabel == "Online For" {
+		return greenStyle
+	}
+	return yellowSytle
 }

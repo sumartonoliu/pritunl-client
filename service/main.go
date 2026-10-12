@@ -59,7 +59,13 @@ func main() {
 		constants.Development = true
 	}
 
-	err := config.Load()
+	err := utils.FlatpakInit()
+	if err != nil {
+		fmt.Println(err.Error())
+		panic(err)
+	}
+
+	err = config.Load()
 	if err != nil {
 		panic(err)
 	}
@@ -235,7 +241,7 @@ func main() {
 
 	if runtime.GOOS == "darwin" {
 		_ = utils.ClearScutilConnKeys()
-		_ = utils.RestoreScutilDns(true)
+		_ = connection.GlobalStore.RestoreDns(true)
 	}
 
 	time.Sleep(750 * time.Millisecond)

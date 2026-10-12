@@ -15,23 +15,24 @@ type Route struct {
 }
 
 type Profile struct {
-	Id            string   `json:"id"`
-	Mode          string   `json:"mode"`
-	Iface         string   `json:"iface"`
-	Tuniface      string   `json:"tun_iface"`
-	Routes        []*Route `json:"routes"`
-	Routes6       []*Route `json:"routes6"`
-	Reconnect     bool     `json:"reconnect"`
-	AuthReconnect bool     `json:"auth_reconnect"`
-	Status        string   `json:"status"`
-	Timestamp     int64    `json:"timestamp"`
-	GatewayAddr   string   `json:"gateway_addr"`
-	GatewayAddr6  string   `json:"gateway_addr6"`
-	ServerAddr    string   `json:"server_addr"`
-	ClientAddr    string   `json:"client_addr"`
-	MacAddr       string   `json:"mac_addr"`
-	MacAddrs      []string `json:"mac_addrs"`
-	SsoUrl        string   `json:"sso_url"`
+	Id              string   `json:"id"`
+	Mode            string   `json:"mode"`
+	Iface           string   `json:"iface"`
+	Tuniface        string   `json:"tun_iface"`
+	Routes          []*Route `json:"routes"`
+	Routes6         []*Route `json:"routes6"`
+	Reconnect       bool     `json:"reconnect"`
+	AuthReconnect   bool     `json:"auth_reconnect"`
+	Status          string   `json:"status"`
+	Timestamp       int64    `json:"timestamp"`
+	GatewayAddr     string   `json:"gateway_addr"`
+	GatewayAddr6    string   `json:"gateway_addr6"`
+	ServerAddr      string   `json:"server_addr"`
+	ClientAddr      string   `json:"client_addr"`
+	MacAddr         string   `json:"mac_addr"`
+	MacAddrs        []string `json:"mac_addrs"`
+	RegistrationKey string   `json:"registration_key"`
+	SsoUrl          string   `json:"sso_url"`
 }
 
 func (p *Profile) Uptime() int64 {
@@ -85,4 +86,33 @@ func (p *Profile) FormatedTime() string {
 	}
 
 	return strings.Join(unitItems, " ")
+}
+
+func (p *Profile) FormatedTimeShort() string {
+	if p.Timestamp == 0 {
+		return "Connecting"
+	}
+
+	uptime := p.Uptime()
+	if uptime < 0 {
+		uptime = 0
+	}
+
+	days := uptime / 86400
+	uptime -= days * 86400
+	hours := uptime / 3600
+	uptime -= hours * 3600
+	mins := uptime / 60
+	secs := uptime - mins*60
+
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh %dm %ds", days, hours, mins, secs)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm %ds", hours, mins, secs)
+	}
+	if mins > 0 {
+		return fmt.Sprintf("%dm %ds", mins, secs)
+	}
+	return fmt.Sprintf("%ds", secs)
 }

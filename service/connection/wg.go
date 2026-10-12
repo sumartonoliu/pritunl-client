@@ -2,10 +2,13 @@ package connection
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
+	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,6 +19,7 @@ import (
 
 	"github.com/dropbox/godropbox/errors"
 	"github.com/pritunl/pritunl-client/service/config"
+	"github.com/pritunl/pritunl-client/service/constants"
 	"github.com/pritunl/pritunl-client/service/errortypes"
 	"github.com/pritunl/pritunl-client/service/network"
 	"github.com/pritunl/pritunl-client/service/platform"
@@ -35,6 +39,14 @@ type Wg struct {
 	wgUtilPath    string
 	wgConfPath    string
 	wgConfPath2   string
+	wgConf        *WgConf
+	wgTemplData   WgConfData
+	allowedIps    []string
+	nmName        string
+	nmUuid        string
+	nmConnPath    string
+	nmActivePath  string
+	nmVolatile    bool
 	connected     bool
 	lastHandshake int
 	bashPath      string
@@ -65,6 +77,199 @@ type WgConf struct {
 	SearchDomains []string `json:"search_domains"`
 }
 
+func parseWgIp(addr string) (netip.Addr, bool) {
+	ip, err := netip.ParseAddr(addr)
+	if err != nil || ip.Zone() != "" || ip.Is4In6() {
+		return netip.Addr{}, false
+	}
+
+	return ip, true
+}
+
+func parseWgNetwork(network string) (netip.Prefix, bool) {
+	prefix, err := netip.ParsePrefix(network)
+	if err != nil {
+		ip, ok := parseWgIp(network)
+		if !ok {
+			return netip.Prefix{}, false
+		}
+		prefix = netip.PrefixFrom(ip, ip.BitLen())
+	}
+
+	if prefix.Addr().Is4In6() {
+		return netip.Prefix{}, false
+	}
+
+	return prefix, true
+}
+
+func validWgKey(key string) bool {
+	data, err := base64.StdEncoding.DecodeString(key)
+	return err == nil && len(data) == 32
+}
+
+func filterSearchDomain(domain string) string {
+	domain = utils.FilterDomain(domain)
+	if strings.Contains(domain, ":") {
+		return ""
+	}
+	if _, err := netip.ParseAddr(domain); err == nil {
+		return ""
+	}
+
+	return domain
+}
+
+func (w *WgConf) Validate() (err error) {
+	addr, ok := parseWgNetwork(w.Address)
+	if !ok || !addr.Addr().Is4() {
+		err = &errortypes.ParseError{
+			errors.New("connection: Invalid wg address"),
+		}
+		return
+	}
+	w.Address = addr.String()
+
+	if w.Address6 != "" {
+		addr6, ok := parseWgNetwork(w.Address6)
+		if !ok || !addr6.Addr().Is6() {
+			err = &errortypes.ParseError{
+				errors.New("connection: Invalid wg address6"),
+			}
+			return
+		}
+		w.Address6 = addr6.String()
+	}
+
+	w.Hostname = utils.FilterDomain(w.Hostname)
+	if w.Hostname == "" {
+		err = &errortypes.ParseError{
+			errors.New("connection: Invalid wg hostname"),
+		}
+		return
+	}
+	w.Hostname6 = utils.FilterDomain(w.Hostname6)
+
+	gateway, ok := parseWgIp(w.Gateway)
+	if !ok || !gateway.Is4() {
+		err = &errortypes.ParseError{
+			errors.New("connection: Invalid wg gateway"),
+		}
+		return
+	}
+	w.Gateway = gateway.String()
+
+	if w.Gateway6 != "" {
+		gateway6, ok := parseWgIp(w.Gateway6)
+		if !ok || !gateway6.Is6() {
+			err = &errortypes.ParseError{
+				errors.New("connection: Invalid wg gateway6"),
+			}
+			return
+		}
+		w.Gateway6 = gateway6.String()
+	}
+
+	if w.PingInterval < 0 {
+		w.PingInterval = 0
+	}
+	if w.PingTimeout < 0 {
+		w.PingTimeout = 0
+	}
+
+	if w.Port < 1 || w.Port > 65535 {
+		err = &errortypes.ParseError{
+			errors.New("connection: Invalid wg port"),
+		}
+		return
+	}
+
+	if w.Mtu < 0 || w.Mtu > 65535 {
+		err = &errortypes.ParseError{
+			errors.New("connection: Invalid wg mtu"),
+		}
+		return
+	}
+
+	if w.WebPort < 1 || w.WebPort > 65535 {
+		err = &errortypes.ParseError{
+			errors.New("connection: Invalid wg web port"),
+		}
+		return
+	}
+
+	w.PublicKey = utils.FilterBase64(w.PublicKey)
+	if !validWgKey(w.PublicKey) {
+		err = &errortypes.ParseError{
+			errors.New("connection: Invalid wg public key"),
+		}
+		return
+	}
+
+	if w.Routes != nil {
+		routes := []*Route{}
+		for _, route := range w.Routes {
+			if route == nil {
+				continue
+			}
+
+			err = route.Validate(false)
+			if err != nil {
+				return
+			}
+
+			routes = append(routes, route)
+		}
+		w.Routes = routes
+	}
+
+	if w.Routes6 != nil {
+		routes6 := []*Route{}
+		for _, route := range w.Routes6 {
+			if route == nil {
+				continue
+			}
+
+			err = route.Validate(true)
+			if err != nil {
+				return
+			}
+
+			routes6 = append(routes6, route)
+		}
+		w.Routes6 = routes6
+	}
+
+	if w.DnsServers != nil {
+		dnsServers := []string{}
+		for _, server := range w.DnsServers {
+			ip, ok := parseWgIp(server)
+			if !ok {
+				err = &errortypes.ParseError{
+					errors.New("connection: Invalid wg dns server"),
+				}
+				return
+			}
+			dnsServers = append(dnsServers, ip.String())
+		}
+		w.DnsServers = dnsServers
+	}
+
+	if w.SearchDomains != nil {
+		searchDomains := []string{}
+		for _, domain := range w.SearchDomains {
+			domain = filterSearchDomain(domain)
+			if domain == "" {
+				continue
+			}
+			searchDomains = append(searchDomains, domain)
+		}
+		w.SearchDomains = searchDomains
+	}
+
+	return
+}
+
 func (w *Wg) Fields() logrus.Fields {
 	return logrus.Fields{
 		"wg_path":           w.wgPath,
@@ -73,6 +278,11 @@ func (w *Wg) Fields() logrus.Fields {
 		"wg_bash_path":      w.bashPath,
 		"wg_conf_path":      w.wgConfPath,
 		"wg_conf_path2":     w.wgConfPath2,
+		"wg_nm_name":        w.nmName,
+		"wg_nm_uuid":        w.nmUuid,
+		"wg_nm_path":        w.nmConnPath,
+		"wg_nm_active_path": w.nmActivePath,
+		"wg_nm_volatile":    w.nmVolatile,
 		"wg_connected":      w.connected,
 		"wg_last_handshake": w.lastHandshake,
 		"wg_pub_key":        w.publicKey != "",
@@ -90,6 +300,10 @@ func (w *Wg) Init() {
 	w.bashPath = GetBashPath()
 }
 
+func (w *Wg) isNm() bool {
+	return utils.IsFlatpak()
+}
+
 func (w *Wg) GetPublicKey() string {
 	return w.publicKey
 }
@@ -99,6 +313,15 @@ func (w *Wg) GetReqPrefix() string {
 }
 
 func (w *Wg) generateKey() (err error) {
+	if w.isNm() {
+		w.privateKey, w.publicKey, err = generateWgKey()
+		if err != nil {
+			return
+		}
+
+		return
+	}
+
 	privateKey, err := utils.ExecOutput(w.wgPath, "genkey")
 	if err != nil {
 		err = &errortypes.ExecError{
@@ -147,6 +370,18 @@ func (w *Wg) Connect(data *ConnData) (err error) {
 				"profile: Authorize returned empty configuration",
 			),
 		}
+		return
+	}
+
+	err = data.Configuration.Validate()
+	if err != nil {
+		w.conn.Data.SendProfileEvent("configuration_error")
+
+		logrus.WithFields(w.conn.Fields(logrus.Fields{
+			"error": err,
+		})).Error("profile: Invalid wg configuration")
+
+		w.conn.State.Close()
 		return
 	}
 
@@ -240,40 +475,40 @@ func (w *Wg) WatchConnection() (err error) {
 	}
 	interval = interval * 2
 
-	for i := 0; i < 50; i++ {
-		if w.conn.State.IsStop() {
-			w.conn.State.Close()
-			return
+	if w.isNm() {
+		w.nmWaitConnected()
+	} else {
+		for i := 0; i < 50; i++ {
+			if w.conn.State.IsStop() {
+				w.conn.State.Close()
+				return
+			}
+
+			if i%interval == 0 {
+				go w.ping()
+			}
+
+			err = w.updateHandshake()
+			if err != nil {
+				logrus.WithFields(w.conn.Fields(logrus.Fields{
+					"error": err,
+				})).Error("connection: Check handshake status failed")
+
+				w.conn.State.Close()
+				return
+			}
+
+			if w.conn.State.IsStop() {
+				w.conn.State.Close()
+				return
+			}
+
+			if w.lastHandshake != 0 {
+				break
+			}
+
+			time.Sleep(500 * time.Millisecond)
 		}
-
-		if i%interval == 0 {
-			go w.ping()
-		}
-
-		err = w.updateHandshake()
-		if err != nil {
-			logrus.WithFields(w.conn.Fields(logrus.Fields{
-				"error": err,
-			})).Error("connection: Check handshake status failed")
-
-			w.conn.State.Close()
-			return
-		}
-
-		if w.conn.State.IsStop() {
-			w.conn.State.Close()
-			return
-		}
-
-		if w.lastHandshake != 0 {
-			w.connected = true
-			w.conn.Data.Status = Connected
-			w.conn.Data.Timestamp = time.Now().Unix() - 3
-			w.conn.Data.UpdateEvent()
-			break
-		}
-
-		time.Sleep(500 * time.Millisecond)
 	}
 
 	if w.conn.State.IsStop() {
@@ -291,6 +526,11 @@ func (w *Wg) WatchConnection() (err error) {
 		w.conn.State.Close()
 		return
 	}
+
+	w.connected = true
+	w.conn.Data.Status = Connected
+	w.conn.Data.Timestamp = time.Now().Unix() - 3
+	w.conn.Data.UpdateEvent()
 
 	if !w.conn.Profile.DisableDns && w.conn.Data.DnsServers != nil &&
 		len(w.conn.Data.DnsServers) > 0 && runtime.GOOS == "darwin" &&
@@ -484,7 +724,7 @@ func (w *Wg) ping() (data *PingData, final bool, err error) {
 }
 
 func (w *Wg) writeWgConf(data *WgConf) (err error) {
-	allowedIps := []string{}
+	routes := []*Route{}
 	if data.Routes != nil {
 		for _, route := range data.Routes {
 			if w.conn.Profile.DisableGateway && route.Network == "0.0.0.0/0" {
@@ -495,10 +735,11 @@ func (w *Wg) writeWgConf(data *WgConf) (err error) {
 				// TODO wireguard exclude
 				//allowedIps = append(allowedIps, "!"+route.Network)
 			} else {
-				allowedIps = append(allowedIps, route.Network)
+				routes = append(routes, route)
 			}
 		}
 	}
+	routes6 := []*Route{}
 	if data.Routes6 != nil {
 		for _, route := range data.Routes6 {
 			if w.conn.Profile.DisableGateway && route.Network == "::/0" {
@@ -509,10 +750,12 @@ func (w *Wg) writeWgConf(data *WgConf) (err error) {
 				// TODO wireguard exclude
 				//allowedIps = append(allowedIps, "!"+route.Network)
 			} else {
-				allowedIps = append(allowedIps, route.Network)
+				routes6 = append(routes6, route)
 			}
 		}
 	}
+
+	allowedIps := GlobalRoutes.Claim(w, routes, routes6)
 
 	addr := data.Address
 	if data.Address6 != "" {
@@ -524,7 +767,8 @@ func (w *Wg) writeWgConf(data *WgConf) (err error) {
 		PrivateKey: w.privateKey,
 		PublicKey:  data.PublicKey,
 		AllowedIps: strings.Join(allowedIps, ","),
-		Endpoint:   fmt.Sprintf("%s:%d", data.Hostname, data.Port),
+		Endpoint: net.JoinHostPort(
+			data.Hostname, strconv.Itoa(data.Port)),
 	}
 
 	if data.Mtu != 0 {
@@ -549,6 +793,27 @@ func (w *Wg) writeWgConf(data *WgConf) (err error) {
 		templData.DnsServers += strings.Join(data.SearchDomains, ",")
 	}
 
+	err = templData.Validate()
+	if err != nil {
+		return
+	}
+
+	w.wgTemplData = templData
+	w.allowedIps = allowedIps
+
+	if w.isNm() {
+		return
+	}
+
+	err = w.writeWgConfFiles(templData)
+	if err != nil {
+		return
+	}
+
+	return
+}
+
+func (w *Wg) writeWgConfFiles(templData WgConfData) (err error) {
 	output := &bytes.Buffer{}
 	err = WgConfTempl.Execute(output, templData)
 	if err != nil {
@@ -629,6 +894,7 @@ func (w *Wg) confWg(data *WgConf) (err error) {
 	w.conn.Data.Routes6 = data.Routes6
 
 	w.serverPubKey = data.PublicKey
+	w.wgConf = data
 
 	switch runtime.GOOS {
 	case "darwin":
@@ -638,7 +904,11 @@ func (w *Wg) confWg(data *WgConf) (err error) {
 		err = w.confWgWin()
 		break
 	case "linux":
-		err = w.confWgLinux()
+		if w.isNm() {
+			err = w.confWgNm()
+		} else {
+			err = w.confWgLinux()
+		}
 		break
 	default:
 		panic("profile: Not implemented")
@@ -684,14 +954,34 @@ func (w *Wg) confWgLinux() (err error) {
 	return
 }
 
+func wgQuickMacEnv() []string {
+	return []string{
+		"PATH=" + constants.MacosHelperDir +
+			":/usr/bin:/bin:/usr/sbin:/sbin",
+		"HOME=/var/root",
+	}
+}
+
+func (w *Wg) wgQuickMacConfPath() string {
+	if w.wgConfPath != "" {
+		return w.wgConfPath
+	}
+
+	confDir, _, _ := GetWgConfDir()
+	return filepath.Join(confDir, w.conn.Data.Iface+".conf")
+}
+
 func (w *Wg) confWgMac() (err error) {
 	w.lock.Lock()
 	defer w.lock.Unlock()
 
+	confPath := w.wgQuickMacConfPath()
+
 	output := ""
 	for i := 0; i < 3; i++ {
-		_, _ = utils.ExecCombinedOutput(
-			w.bashPath, w.wgQuickPath, "down", w.conn.Data.Iface,
+		_, _ = utils.ExecCombinedOutputEnv(
+			wgQuickMacEnv(),
+			w.bashPath, w.wgQuickPath, "down", confPath,
 		)
 
 		if i == 0 {
@@ -700,11 +990,12 @@ func (w *Wg) confWgMac() (err error) {
 			time.Sleep(500 * time.Millisecond)
 		}
 
-		output, err = utils.ExecCombinedOutputLogged(
+		output, err = utils.ExecCombinedOutputLoggedEnv(
 			nil,
+			wgQuickMacEnv(),
 			w.bashPath,
 			w.wgQuickPath,
-			"up", w.conn.Data.Iface,
+			"up", confPath,
 		)
 		if err == nil {
 			break
@@ -786,7 +1077,9 @@ func (w *Wg) confWgWin() (err error) {
 func (w *Wg) applyRouteMetrics(data *WgConf) {
 	switch runtime.GOOS {
 	case "linux":
-		w.applyRouteMetricsLinux(data)
+		if !w.isNm() {
+			w.applyRouteMetricsLinux(data)
+		}
 		break
 	case "windows":
 		w.applyRouteMetricsWin(data)
@@ -937,13 +1230,14 @@ func (w *Wg) clearWgMac() {
 	defer w.lock.Unlock()
 
 	if w.conn.Data.Iface != "" {
-		utils.ExecCombinedOutputLogged(
+		utils.ExecCombinedOutputLoggedEnv(
 			[]string{
 				"is not a",
 			},
+			wgQuickMacEnv(),
 			w.bashPath,
 			w.wgQuickPath,
-			"down", w.conn.Data.Iface,
+			"down", w.wgQuickMacConfPath(),
 		)
 	}
 }
@@ -968,7 +1262,11 @@ func (w *Wg) clearWgWin() {
 func (w *Wg) clearWg() {
 	switch runtime.GOOS {
 	case "linux":
-		w.clearWgLinux()
+		if w.isNm() {
+			w.clearWgNm()
+		} else {
+			w.clearWgLinux()
+		}
 		break
 	case "darwin":
 		w.clearWgMac()
@@ -981,8 +1279,121 @@ func (w *Wg) clearWg() {
 	network.InterfaceRelease(w.conn.Data.Iface)
 }
 
+func (w *Wg) addAllowedIp(route *Route, ipv6 bool, allowedIps []string) {
+	w.lock.Lock()
+	defer w.lock.Unlock()
+
+	iface := w.conn.Data.Iface
+	if iface == "" || w.serverPubKey == "" {
+		return
+	}
+
+	wgIface := iface
+	if runtime.GOOS == "darwin" {
+		wgIface = w.conn.Data.WgTunIface
+		if wgIface == "" {
+			return
+		}
+	}
+
+	if w.isNm() {
+		err := w.nmReapply(allowedIps)
+		if err != nil {
+			logrus.WithFields(w.conn.Fields(logrus.Fields{
+				"network": route.Network,
+				"error":   err,
+			})).Warn("connection: Failed to update allowed ips")
+			return
+		}
+
+		logrus.WithFields(w.conn.Fields(logrus.Fields{
+			"network": route.Network,
+		})).Info("connection: Added released route")
+		return
+	}
+
+	_, err := utils.ExecCombinedOutputLogged(
+		nil,
+		w.wgPath, "set", wgIface,
+		"peer", w.serverPubKey,
+		"allowed-ips", strings.Join(allowedIps, ","),
+	)
+	if err != nil {
+		logrus.WithFields(w.conn.Fields(logrus.Fields{
+			"network": route.Network,
+			"error":   err,
+		})).Warn("connection: Failed to update allowed ips")
+		return
+	}
+
+	switch runtime.GOOS {
+	case "linux":
+		family := "-4"
+		if ipv6 {
+			family = "-6"
+		}
+
+		args := []string{
+			"ip", family, "route", "add",
+			route.Network, "dev", iface,
+		}
+		if route.Metric != 0 {
+			args = append(args, "metric", strconv.Itoa(route.Metric))
+		}
+
+		_, err = utils.ExecCombinedOutputLogged(
+			[]string{"File exists"},
+			args[0], args[1:]...,
+		)
+		break
+	case "darwin":
+		family := "-inet"
+		if ipv6 {
+			family = "-inet6"
+		}
+
+		_, err = utils.ExecCombinedOutputLogged(
+			[]string{"File exists"},
+			"route", "-q", "-n", "add", family,
+			route.Network, "-interface", wgIface,
+		)
+		break
+	case "windows":
+		family := "ipv4"
+		if ipv6 {
+			family = "ipv6"
+		}
+
+		args := []string{
+			"netsh", "interface", family, "add", "route",
+			route.Network, iface,
+		}
+		if route.Metric != 0 {
+			args = append(args, fmt.Sprintf("metric=%d", route.Metric))
+		}
+
+		_, err = utils.ExecCombinedOutputLogged(
+			[]string{"already exists"},
+			args[0], args[1:]...,
+		)
+		break
+	}
+	if err != nil {
+		logrus.WithFields(w.conn.Fields(logrus.Fields{
+			"network": route.Network,
+			"error":   err,
+		})).Warn("connection: Failed to add released route")
+		return
+	}
+
+	logrus.WithFields(w.conn.Fields(logrus.Fields{
+		"network": route.Network,
+	})).Info("connection: Added released route")
+}
+
 func (w *Wg) Disconnect() {
 	w.clearWg()
+	GlobalRoutes.Release(w)
 
 	return
 }

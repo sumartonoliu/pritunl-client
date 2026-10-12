@@ -145,6 +145,35 @@ func ReleaseTap(intf *Interface) {
 	lockedInterfaces.Remove(intf.Id)
 }
 
+type ScutilState struct {
+	PrimaryService string
+	Connections    []string
+}
+
+func GetScutilState() (state *ScutilState, err error) {
+	macDnsLock.Lock()
+	defer macDnsLock.Unlock()
+
+	primaryServiceId, err := getPrimaryService()
+	if err != nil {
+		logrus.WithFields(logrus.Fields{
+			"error": err,
+		}).Warning("utils: Failed to get primary service for DNS")
+		err = nil
+	}
+
+	connIds, err := getScutilConnIds()
+	if err != nil {
+		return
+	}
+
+	state = &ScutilState{
+		PrimaryService: primaryServiceId,
+		Connections:    connIds,
+	}
+	return
+}
+
 func GetScutilKey(typ, key string) (val string, err error) {
 	macDnsLock.Lock()
 	defer macDnsLock.Unlock()
@@ -281,22 +310,19 @@ func SetScutilDns(connId string, addresses, domains []string) (err error) {
 			"remove State:%s\n"+
 			"remove Setup:%s\n"+
 			"set State:%s\n"+
-			"set Setup:%s\n"+
 			"set State:/Network/Pritunl/Connection/%s\n"+
 			"quit\n",
 			strings.Join(addresses, " "), strings.Join(domains, " "),
-			PritunlScutilKey, PritunlScutilKey, PritunlScutilKey,
-			PritunlScutilKey, connId)
+			PritunlScutilKey, PritunlScutilKey, PritunlScutilKey, connId)
 		if primaryServiceId != "" {
 			inputPrimary = fmt.Sprintf("open\n"+
 				"get State:/Network/Service/%s/DNS\n"+
 				"%s"+
 				"d.add SearchDomains * %s\n"+
 				"set State:/Network/Service/%s/DNS\n"+
-				"set Setup:/Network/Service/%s/DNS\n"+
 				"quit\n",
 				primaryServiceId, inputBackup, strings.Join(domains, " "),
-				primaryServiceId, primaryServiceId)
+				primaryServiceId)
 		}
 	} else if len(addresses) > 0 {
 		input = fmt.Sprintf("open\n"+
@@ -306,12 +332,10 @@ func SetScutilDns(connId string, addresses, domains []string) (err error) {
 			"remove State:%s\n"+
 			"remove Setup:%s\n"+
 			"set State:%s\n"+
-			"set Setup:%s\n"+
 			"set State:/Network/Pritunl/Connection/%s\n"+
 			"quit\n",
 			strings.Join(addresses, " "),
-			PritunlScutilKey, PritunlScutilKey, PritunlScutilKey,
-			PritunlScutilKey, connId)
+			PritunlScutilKey, PritunlScutilKey, PritunlScutilKey, connId)
 	} else if len(domains) > 0 {
 		input = fmt.Sprintf("open\n"+
 			"d.init\n"+
@@ -320,22 +344,19 @@ func SetScutilDns(connId string, addresses, domains []string) (err error) {
 			"remove State:%s\n"+
 			"remove Setup:%s\n"+
 			"set State:%s\n"+
-			"set Setup:%s\n"+
 			"set State:/Network/Pritunl/Connection/%s\n"+
 			"quit\n",
 			strings.Join(domains, " "),
-			PritunlScutilKey, PritunlScutilKey, PritunlScutilKey,
-			PritunlScutilKey, connId)
+			PritunlScutilKey, PritunlScutilKey, PritunlScutilKey, connId)
 		if primaryServiceId != "" {
 			inputPrimary = fmt.Sprintf("open\n"+
 				"get State:/Network/Service/%s/DNS\n"+
 				"%s"+
 				"d.add SearchDomains * %s\n"+
 				"set State:/Network/Service/%s/DNS\n"+
-				"set Setup:/Network/Service/%s/DNS\n"+
 				"quit\n",
 				primaryServiceId, inputBackup, strings.Join(domains, " "),
-				primaryServiceId, primaryServiceId)
+				primaryServiceId)
 		}
 	}
 
@@ -460,10 +481,9 @@ func RestoreSearchDomains(primaryServiceId string) (err error) {
 
 	input += fmt.Sprintf(
 		"set State:/Network/Service/%s/DNS\n"+
-			"set Setup:/Network/Service/%s/DNS\n"+
 			"remove %s\n"+
 			"quit\n",
-		primaryServiceId, primaryServiceId, backupKey,
+		primaryServiceId, backupKey,
 	)
 
 	cmd = command.Command("/usr/sbin/scutil")
@@ -566,93 +586,6 @@ func CopyClearScutilMultiKey(typ, src string, dsts ...*ScutilKey) (
 	return
 }
 
-func RestoreScutilDns(force bool) (err error) {
-	if runtime.GOOS != "darwin" {
-		return
-	}
-
-	logrus.Info("utils: Restore DNS")
-
-	primaryServiceId := ""
-	connIds := []string{}
-	func() {
-		macDnsLock.Lock()
-		defer macDnsLock.Unlock()
-
-		primaryServiceId, err = getPrimaryService()
-		if err != nil {
-			logrus.WithFields(logrus.Fields{
-				"error": err,
-			}).Warning("utils: Failed to get primary service for DNS")
-			err = nil
-		}
-
-		connIds, err = getScutilConnIds()
-		if err != nil {
-			return
-		}
-	}()
-	if err != nil {
-		return
-	}
-
-	connected := len(connIds) != 0
-
-	restoreKey := ""
-	if connected && !force {
-		restoreKey = fmt.Sprintf(
-			"/Network/Pritunl/Connection/%s", connIds[0])
-	}
-
-	if restoreKey != "" {
-		err = CopyClearScutilMultiKey(
-			"State", restoreKey,
-			&ScutilKey{
-				Type: "State",
-				Key:  PritunlScutilKey,
-			},
-			&ScutilKey{
-				Type: "Setup",
-				Key:  PritunlScutilKey,
-			},
-		)
-		if err != nil {
-			return
-		}
-	} else {
-		err = RemoveScutilKey("State", PritunlScutilKey)
-		if err != nil {
-			logrus.WithFields(logrus.Fields{
-				"type": "State",
-				"key":  PritunlScutilKey,
-			}).Error("utils: Failed to clear DNS service")
-			return
-		}
-		err = RemoveScutilKey("Setup", PritunlScutilKey)
-		if err != nil {
-			logrus.WithFields(logrus.Fields{
-				"type": "Setup",
-				"key":  PritunlScutilKey,
-			}).Error("utils: Failed to clear DNS service")
-			return
-		}
-	}
-
-	if !connected {
-		err = RestoreSearchDomains(primaryServiceId)
-		if err != nil {
-			logrus.WithFields(logrus.Fields{
-				"error": err,
-			}).Error("utils: Failed to restore primary DNS")
-			err = nil
-		}
-	}
-
-	ClearDNSCache()
-
-	return
-}
-
 func RefreshScutilDns() (err error) {
 	if runtime.GOOS != "darwin" {
 		return
@@ -664,10 +597,6 @@ func RefreshScutilDns() (err error) {
 		"State", PritunlScutilKey,
 		&ScutilKey{
 			Type: "State",
-			Key:  PritunlScutilKey,
-		},
-		&ScutilKey{
-			Type: "Setup",
 			Key:  PritunlScutilKey,
 		},
 	)
@@ -714,6 +643,34 @@ func GetScutilConnIds() (ids []string, err error) {
 
 	ids, err = getScutilConnIds()
 	if err != nil {
+		return
+	}
+
+	return
+}
+
+func RemoveScutilConnKeys(connIds []string) (err error) {
+	macDnsLock.Lock()
+	defer macDnsLock.Unlock()
+
+	remove := ""
+	for _, connId := range connIds {
+		remove += fmt.Sprintf(
+			"remove State:/Network/Pritunl/Connection/%s\n", connId)
+	}
+
+	if remove == "" {
+		return
+	}
+
+	cmd := command.Command("/usr/sbin/scutil")
+	cmd.Stdin = strings.NewReader("open\n" + remove + "quit\n")
+
+	err = cmd.Run()
+	if err != nil {
+		err = &CommandError{
+			errors.Wrap(err, "utils: Failed to exec scutil"),
+		}
 		return
 	}
 
@@ -1091,6 +1048,11 @@ func GetAuthPath() (pth string) {
 		pth = filepath.Join(pth, "auth")
 		break
 	case "linux", "darwin":
+		if IsFlatpak() {
+			pth = filepath.Join(GetFlatpakRunDir(), "pritunl.auth")
+			break
+		}
+
 		pth = filepath.Join(string(filepath.Separator),
 			"var", "run", "pritunl.auth")
 		break
@@ -1111,6 +1073,11 @@ func GetLogPath() (pth string) {
 		pth = filepath.Join(pth, "pritunl-client.log")
 		break
 	case "linux", "darwin":
+		if IsFlatpak() {
+			pth = filepath.Join(GetFlatpakConfigDir(), "pritunl-client.log")
+			break
+		}
+
 		pth = filepath.Join(string(filepath.Separator),
 			"var", "log", "pritunl-client.log")
 		break
@@ -1131,6 +1098,11 @@ func GetLogPath2() (pth string) {
 		pth = filepath.Join(pth, "pritunl-client.log.1")
 		break
 	case "linux", "darwin":
+		if IsFlatpak() {
+			pth = filepath.Join(GetFlatpakConfigDir(), "pritunl-client.log.1")
+			break
+		}
+
 		pth = filepath.Join(string(filepath.Separator),
 			"var", "log", "pritunl-client.log.1")
 		break
@@ -1141,9 +1113,16 @@ func GetLogPath2() (pth string) {
 	return
 }
 
+func getTempDirUnix() string {
+	if IsFlatpak() {
+		return filepath.Join(GetFlatpakRunDir(), "tmp")
+	}
+	return filepath.Join(string(filepath.Separator), "tmp", "pritunl")
+}
+
 func InitTempDir() (err error) {
 	if runtime.GOOS != "windows" {
-		pth := filepath.Join(string(filepath.Separator), "tmp", "pritunl")
+		pth := getTempDirUnix()
 
 		_ = os.RemoveAll(pth)
 		err = platform.MkdirSecure(pth)
@@ -1170,7 +1149,7 @@ func GetTempDir() (pth string, err error) {
 			return
 		}
 	} else {
-		pth = filepath.Join(string(filepath.Separator), "tmp", "pritunl")
+		pth = getTempDirUnix()
 		err = platform.MkdirSecure(pth)
 		if err != nil {
 			err = &IoError{
@@ -1187,6 +1166,11 @@ func GetTempDir() (pth string, err error) {
 func GetPidPath() (pth string) {
 	switch runtime.GOOS {
 	case "linux", "darwin":
+		if IsFlatpak() {
+			pth = filepath.Join(GetFlatpakRunDir(), "pritunl.pid")
+			break
+		}
+
 		pth = filepath.Join(string(filepath.Separator),
 			"var", "run", "pritunl.pid")
 		break
@@ -1204,6 +1188,35 @@ func PidInit() (err error) {
 
 	pth := GetPidPath()
 	pid := 0
+
+	if IsFlatpak() {
+		locked, e := platform.InstanceLock(
+			filepath.Join(GetFlatpakRunDir(), "pritunl.lock"))
+		if e != nil {
+			err = e
+			return
+		}
+
+		if !locked {
+			fmt.Println("utils: Service already running, exiting")
+			os.Exit(0)
+		}
+
+		_ = os.Remove(pth)
+		err = ioutil.WriteFile(
+			pth,
+			[]byte(strconv.Itoa(os.Getpid())),
+			0644,
+		)
+		if err != nil {
+			err = errortypes.WriteError{
+				errors.Wrapf(err, "utils: Failed to write pid"),
+			}
+			return
+		}
+
+		return
+	}
 
 	data, err := ioutil.ReadFile(pth)
 	if err != nil {

@@ -31,6 +31,7 @@ type sprofileData struct {
 	DeviceAuth         bool                        `json:"device_auth"`
 	DisableGateway     bool                        `json:"disable_gateway"`
 	DisableDns         bool                        `json:"disable_dns"`
+	DisableIpv6        bool                        `json:"disable_ipv6"`
 	Dco                bool                        `json:"dco"`
 	DebugOutput        bool                        `json:"debug_output"`
 	RestrictClient     bool                        `json:"restrict_client"`
@@ -68,7 +69,7 @@ func sprofilesGet(c *gin.Context) {
 }
 
 func sprofileGet(c *gin.Context) {
-	prflId := utils.FilterStr(c.Param("profile_id"))
+	prflId := utils.FilterId(c.Param("profile_id"))
 	if prflId == "" {
 		err := &errortypes.ParseError{
 			errors.New("handler: Invalid profile ID"),
@@ -87,6 +88,14 @@ func sprofileGet(c *gin.Context) {
 }
 
 func sprofilePut(c *gin.Context) {
+	if utils.IsFlatpak() {
+		err := &errortypes.WriteError{
+			errors.New("handler: System profiles not supported in Flatpak"),
+		}
+		utils.AbortWithError(c, 400, err)
+		return
+	}
+
 	data := &sprofileData{}
 
 	err := c.Bind(data)
@@ -98,7 +107,7 @@ func sprofilePut(c *gin.Context) {
 		return
 	}
 
-	data.Id = utils.FilterStr(data.Id)
+	data.Id = utils.FilterId(data.Id)
 	if data.Id == "" {
 		err = &errortypes.ParseError{
 			errors.New("handler: Invalid profile ID"),
@@ -127,6 +136,7 @@ func sprofilePut(c *gin.Context) {
 		DeviceAuth:         data.DeviceAuth,
 		DisableGateway:     data.DisableGateway,
 		DisableDns:         data.DisableDns,
+		DisableIpv6:        data.DisableIpv6,
 		Dco:                data.Dco,
 		DebugOutput:        data.DebugOutput,
 		RestrictClient:     data.RestrictClient,
@@ -168,7 +178,7 @@ func sprofileDel(c *gin.Context) {
 		return
 	}
 
-	prflId := utils.FilterStr(data.Id)
+	prflId := utils.FilterId(data.Id)
 	if prflId == "" {
 		err = &errortypes.ParseError{
 			errors.New("handler: Invalid profile ID"),
@@ -190,7 +200,7 @@ func sprofileDel(c *gin.Context) {
 }
 
 func sprofileDel2(c *gin.Context) {
-	prflId := utils.FilterStr(c.Param("profile_id"))
+	prflId := utils.FilterId(c.Param("profile_id"))
 	if prflId == "" {
 		err := &errortypes.ParseError{
 			errors.New("handler: Invalid profile ID"),
@@ -212,7 +222,7 @@ func sprofileDel2(c *gin.Context) {
 }
 
 func sprofileLogGet(c *gin.Context) {
-	prflId := utils.FilterStr(c.Param("profile_id"))
+	prflId := utils.FilterId(c.Param("profile_id"))
 	if prflId == "" {
 		err := &errortypes.ParseError{
 			errors.New("handler: Invalid profile ID"),
@@ -237,7 +247,7 @@ func sprofileLogGet(c *gin.Context) {
 }
 
 func sprofileLogDel(c *gin.Context) {
-	prflId := utils.FilterStr(c.Param("profile_id"))
+	prflId := utils.FilterId(c.Param("profile_id"))
 	if prflId == "" {
 		err := &errortypes.ParseError{
 			errors.New("handler: Invalid profile ID"),

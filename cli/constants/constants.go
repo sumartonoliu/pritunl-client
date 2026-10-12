@@ -1,9 +1,14 @@
 package constants
 
+import (
+	"os"
+)
+
 const (
-	Version = "1.3.4566.62"
+	Version = "1.4.4777.90"
 )
 
 var (
 	Development = false
+	Flatpak     = os.Getenv("FLATPAK_MODE") == "true"
 )

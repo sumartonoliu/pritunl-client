@@ -8,6 +8,7 @@ import * as Alert from '../Alert';
 import * as Paths from '../Paths';
 import Loader from '../Loader';
 import * as ProfileTypes from '../types/ProfileTypes';
+import * as ChartTypes from '../types/ChartTypes';
 import ProfilesStore from '../stores/ProfilesStore';
 import * as MiscUtils from '../utils/MiscUtils';
 import * as RequestUtils from '../utils/RequestUtils';
@@ -333,6 +334,35 @@ export function filter(filt: ProfileTypes.Filter): Promise<void> {
 	return sync();
 }
 
+export function chart(prflId: string, resource: string, period: number,
+		interval: number): Promise<ChartTypes.ProfileData> {
+
+	return new Promise<ChartTypes.ProfileData>((resolve, reject): void => {
+		RequestUtils
+			.get('/profile/' + prflId + '/chart?resource=' + resource +
+				'&period=' + period + '&interval=' + interval)
+			.set('Accept', 'application/json')
+			.end()
+			.then((resp: Request.Response) => {
+				if (resp.status !== 200) {
+					let err = new Errors.ReadError(
+						null, "Profiles: Failed to load profile chart",
+						{body: resp.data})
+					Logger.errorAlert2(err)
+					reject(err)
+					return
+				}
+				resolve(resp.json() as ChartTypes.ProfileData)
+			}, (err) => {
+				err = new Errors.RequestError(err,
+					"Profiles: Chart load error")
+				Logger.errorAlert2(err)
+				reject(err)
+				return
+			})
+	})
+}
+
 export function commit(prfl: ProfileTypes.Profile): Promise<void> {
 	return new Promise<void>((resolve): void => {
 		prfl.writeConf().then(() => {
@@ -357,6 +387,38 @@ EventDispatcher.register((action: ProfileTypes.ProfileDispatch) => {
 				}
 			}
 			Alert.error("Failed to authenticate")
+			break
+		case "flatpak_tpm_missing":
+			if (action.data) {
+				let prfl = ProfilesStore.profile(action.data.id)
+				if (prfl) {
+					Alert.error("Flatpak missing TPM access for device " +
+						"authentication on " + prfl.formattedName() +
+						". Flatpak must have device access for " +
+						"device authentication.")
+					return
+				}
+			}
+			Alert.error("Flatpak missing TPM access for device " +
+				"authentication. Flatpak must have device access for " +
+				"device authentication.")
+			break
+		case "flatpak_tpm_unauthorized":
+			if (action.data) {
+				let prfl = ProfilesStore.profile(action.data.id)
+				if (prfl) {
+					Alert.error("Permission denied accessing TPM for device " +
+						"authentication on " + prfl.formattedName() +
+						". Flatpak has access to the TPM device but " +
+						"does not have permission to open it. Update the " +
+						"udev rules to provide access.")
+					return
+				}
+			}
+			Alert.error("Permission denied accessing TPM for device " +
+				"authentication. Flatpak has access to the TPM device but " +
+				"does not have permission to open it. Update the udev rules to " +
+				"provide access.")
 			break
 		case "inactive":
 			if (action.data) {
@@ -413,6 +475,17 @@ EventDispatcher.register((action: ProfileTypes.ProfileDispatch) => {
 			}
 			Alert.error("Handshake timeout")
 			break
+		case "configuration_error":
+			if (action.data) {
+				let prfl = ProfilesStore.profile(action.data.id)
+				if (prfl) {
+					Alert.error("Configuration error on " +
+						prfl.formattedName())
+					return
+				}
+			}
+			Alert.error("Handshake timeout")
+			break
 		case "sso_auth":
 			let ssoAuthMsg = "Connection requires single sign-on authentication. " +
 				"Complete authentication in web browser. Copy the link below if " +
@@ -435,7 +508,7 @@ EventDispatcher.register((action: ProfileTypes.ProfileDispatch) => {
 					type="button"
 					style={css.updateButton}
 					onClick={(evt): void => {
-						Electron.clipboard.writeText(action.data.url)
+						Electron.ipcRenderer.send("control", "copy", action.data.url)
 						evt.currentTarget.className = "bp5-button bp5-intent-success " +
 							"bp5-icon-link"
 						evt.currentTarget.innerText = "Link Copied"

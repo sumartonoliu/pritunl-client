@@ -71,6 +71,11 @@ func (o *Ovpn) Fields() logrus.Fields {
 		remotes = o.remotes.GetFormatted()
 	}
 
+	remapUsr1 := false
+	if o.parsedPrfl != nil {
+		remapUsr1 = o.parsedPrfl.RemapUsr1
+	}
+
 	return logrus.Fields{
 		"ovpn_dir":              o.ovpnDir,
 		"ovpn_path":             o.ovpnPath,
@@ -83,6 +88,7 @@ func (o *Ovpn) Fields() logrus.Fields {
 		"ovpn_last_auth_failed": utils.SinceFormatted(o.lastAuthFailed),
 		"ovpn_cmd":              o.cmd != nil,
 		"ovpn_remotes":          remotes,
+		"ovpn_remap_usr1":       remapUsr1,
 	}
 }
 
@@ -198,6 +204,7 @@ func (o *Ovpn) Connect(data *ConnData) (err error) {
 		o.remotes,
 		o.conn.Profile.DisableGateway,
 		o.conn.Profile.DisableDns,
+		o.conn.Profile.DisableIpv6,
 		o.conn.Profile.Dco,
 		o.conn.Profile.DebugOutput,
 	)
@@ -229,6 +236,18 @@ func (o *Ovpn) Connect(data *ConnData) (err error) {
 		}
 	}
 
+	authUserPass := (o.conn.Profile.Username != "" &&
+		o.conn.Profile.Password != "") ||
+		o.parsedPrfl.AuthUserPass ||
+		o.conn.Data.HasAuthToken() || data.Token != ""
+
+	if authUserPass && (data.Token != "" ||
+		o.conn.Profile.ServerBoxPublicKey != "" ||
+		o.conn.Profile.ServerPublicKey != "") && o.remotes.Single() {
+
+		o.parsedPrfl.RemapUsr1 = true
+	}
+
 	confPath, err := o.write(data)
 	if err != nil {
 		return
@@ -241,12 +260,7 @@ func (o *Ovpn) Connect(data *ConnData) (err error) {
 	}
 
 	var authPath string
-	// TODO o.conn.Profile.ServerBoxPublicKey != "" ||
-	// TODO o.conn.Profile.ServerPublicKey != "" ||
-	if (o.conn.Profile.Username != "" && o.conn.Profile.Password != "") ||
-		o.parsedPrfl.AuthUserPass ||
-		o.conn.Data.HasAuthToken() || data.Token != "" {
-
+	if authUserPass {
 		authPath, err = o.writeAuth(data.Token)
 		if err != nil {
 			return
@@ -566,8 +580,13 @@ func (o *Ovpn) writeAuth(authToken string) (pth string, err error) {
 		copy(serverPubKey[:], serverPubKeySlic)
 
 		tokn, e := o.conn.Data.GetAuthToken()
-		if e != nil {
+		if e != nil || tokn == nil {
 			err = e
+			return
+		}
+
+		if o.conn.State.IsStop() {
+			o.conn.State.Close()
 			return
 		}
 
@@ -614,7 +633,7 @@ func (o *Ovpn) writeAuth(authToken string) (pth string, err error) {
 		}
 
 		tokn, e := o.conn.Data.GetAuthToken()
-		if e != nil {
+		if e != nil || tokn == nil {
 			err = e
 			return
 		}
@@ -687,9 +706,9 @@ func (o *Ovpn) writeUp(ovpn27 bool) (pth string, err error) {
 			script = blockScript
 		} else if o.conn.Profile.ForceDns {
 			DnsForced = true
-			script = upDnsScriptDarwin
+			script = fmt.Sprintf(upDnsScriptDarwin, o.conn.Id)
 		} else {
-			script = upScriptDarwin
+			script = fmt.Sprintf(upScriptDarwin, o.conn.Id)
 		}
 		break
 	case "linux":
@@ -755,7 +774,7 @@ func (o *Ovpn) writeDown() (pth string, err error) {
 		if o.conn.Profile.DisableDns {
 			script = blockScript
 		} else {
-			script = downScriptDarwin
+			script = fmt.Sprintf(downScriptDarwin, o.conn.Id)
 		}
 		break
 	case "linux":
@@ -1387,7 +1406,7 @@ func (o *Ovpn) waitExit() {
 	o.running = -1
 
 	if runtime.GOOS == "darwin" {
-		err := utils.RestoreScutilDns(false)
+		err := GlobalStore.RestoreDns(false)
 		if err != nil {
 			logrus.WithFields(o.conn.Fields(logrus.Fields{
 				"error": err,

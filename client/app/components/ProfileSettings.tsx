@@ -348,6 +348,10 @@ export default class ProfileSettings extends React.Component<Props, State> {
 							value: profile.disable_dns,
 						},
 						{
+							label: 'Disable IPv6',
+							value: profile.disable_ipv6,
+						},
+						{
 							label: 'Data Channel Offload',
 							value: profile.dco,
 						},
@@ -488,6 +492,15 @@ export default class ProfileSettings extends React.Component<Props, State> {
 						}}
 					/>
 					<PageSwitch
+						label="Disable IPv6"
+						help="Ignore the IPv6 configuration provided by the server on this profile. Use when the host has IPv6 disabled to prevent connection failures applying IPv6 addresses and routes."
+						hidden={profile.restrict_client && !profile.disable_ipv6}
+						checked={!!profile.disable_ipv6}
+						onToggle={(): void => {
+							this.set("disable_ipv6", !profile.disable_ipv6)
+						}}
+					/>
+					<PageSwitch
 						label="Data Channel Offload"
 						help="Enable Data Channel Offload for improved performance. Requires server support and configuration changes."
 						hidden={profile.restrict_client}
@@ -509,9 +522,8 @@ export default class ProfileSettings extends React.Component<Props, State> {
 						label="Force DNS configuration"
 						help="Configure only one DNS server to correct issues with macOS DNS server priority. This is not recommended unless required and will cause networking compatibility issues."
 						hidden={
-							Constants.platform !== "darwin" &&
 							!profile.force_dns &&
-							!this.state.showData
+							(Constants.platform !== "darwin" || !this.state.showData)
 						}
 						checked={!!profile.force_dns}
 						onToggle={(): void => {
